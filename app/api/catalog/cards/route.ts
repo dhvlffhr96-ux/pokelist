@@ -8,11 +8,13 @@ export async function GET(request: Request) {
     const page = searchParams.get("page") ?? "1";
     const pageSize = searchParams.get("pageSize") ?? "10";
     const setId = searchParams.get("setId");
+    const rarity = searchParams.get("rarity") ?? "";
     const cards = await searchCatalogCards({
       query,
       page: Number(page),
       pageSize: Number(pageSize),
       setId: setId ? Number(setId) : undefined,
+      rarity: rarity || undefined,
     });
 
     return NextResponse.json({ data: cards });

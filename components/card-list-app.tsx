@@ -84,17 +84,21 @@ export function CardListApp({
   const [selectedSeriesName, setSelectedSeriesName] = useState("");
   const [setOptions, setSetOptions] = useState<CardSetSummary[]>([]);
   const [selectedSet, setSelectedSet] = useState<CardSetSummary | null>(null);
+  const [rarityOptions, setRarityOptions] = useState<string[]>([]);
+  const [selectedRarity, setSelectedRarity] = useState("");
   const [collectionQuery, setCollectionQuery] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [seriesError, setSeriesError] = useState<string | null>(null);
   const [setError, setSetError] = useState<string | null>(null);
+  const [rarityError, setRarityError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isLoadingUser, setIsLoadingUser] = useState(false);
   const [isSearchingCatalog, setIsSearchingCatalog] = useState(false);
   const [isLoadingSeries, setIsLoadingSeries] = useState(false);
   const [isLoadingSets, setIsLoadingSets] = useState(false);
+  const [isLoadingRarities, setIsLoadingRarities] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(collectionQuery);
@@ -104,34 +108,69 @@ export function CardListApp({
   const uniqueSets = new Set(cards.map((card) => card.card.setNameKo)).size;
 
   useEffect(() => {
-    async function loadInitialSeries() {
+    async function loadInitialFilters() {
       setIsLoadingSeries(true);
+      setIsLoadingRarities(true);
       setSeriesError(null);
+      setRarityError(null);
 
-      try {
-        const query = new URLSearchParams({
-          limit: "200",
-        });
-        const response = await fetch(`/api/catalog/series?${query.toString()}`, {
+      const seriesQuery = new URLSearchParams({
+        limit: "200",
+      });
+      const [seriesSettled, raritySettled] = await Promise.allSettled([
+        fetch(`/api/catalog/series?${seriesQuery.toString()}`, {
           cache: "no-store",
-        });
-        const result = (await response.json()) as ApiResponse<CardSeriesSummary[]>;
+        }),
+        fetch("/api/catalog/rarities", {
+          cache: "no-store",
+        }),
+      ]);
 
-        if (!response.ok || !result.data) {
-          throw new Error(result.error ?? "카드 시리즈 조회에 실패했습니다.");
+      if (seriesSettled.status === "fulfilled") {
+        try {
+          const seriesResult =
+            (await seriesSettled.value.json()) as ApiResponse<CardSeriesSummary[]>;
+
+          if (!seriesSettled.value.ok || !seriesResult.data) {
+            throw new Error(seriesResult.error ?? "카드 시리즈 조회에 실패했습니다.");
+          }
+
+          setSeriesOptions(seriesResult.data);
+        } catch (error) {
+          setSeriesError(
+            error instanceof Error ? error.message : "카드 시리즈 조회에 실패했습니다.",
+          );
+        } finally {
+          setIsLoadingSeries(false);
         }
-
-        setSeriesOptions(result.data);
-      } catch (error) {
-        setSeriesError(
-          error instanceof Error ? error.message : "카드 시리즈 조회에 실패했습니다.",
-        );
-      } finally {
+      } else {
+        setSeriesError("카드 시리즈 조회에 실패했습니다.");
         setIsLoadingSeries(false);
+      }
+
+      if (raritySettled.status === "fulfilled") {
+        try {
+          const rarityResult = (await raritySettled.value.json()) as ApiResponse<string[]>;
+
+          if (!raritySettled.value.ok || !rarityResult.data) {
+            throw new Error(rarityResult.error ?? "카드 레어도 조회에 실패했습니다.");
+          }
+
+          setRarityOptions(rarityResult.data);
+        } catch (error) {
+          setRarityError(
+            error instanceof Error ? error.message : "카드 레어도 조회에 실패했습니다.",
+          );
+        } finally {
+          setIsLoadingRarities(false);
+        }
+      } else {
+        setRarityError("카드 레어도 조회에 실패했습니다.");
+        setIsLoadingRarities(false);
       }
     }
 
-    void loadInitialSeries();
+    void loadInitialFilters();
   }, []);
 
   function resetCatalogResults() {
@@ -197,7 +236,7 @@ export function CardListApp({
       const result = (await response.json()) as ApiResponse<UserCollectionResponse>;
 
       if (!response.ok || !result.data) {
-        throw new Error(result.error ?? "사용자 카드 파일을 불러오지 못했습니다.");
+        throw new Error(result.error ?? "사용자 카드 목록을 불러오지 못했습니다.");
       }
 
       setActiveUserId(result.data.userId);
@@ -208,14 +247,18 @@ export function CardListApp({
       setSuccessMessage(`사용자 "${result.data.userId}" 목록을 불러왔습니다.`);
     } catch (error) {
       setLoadError(
-        error instanceof Error ? error.message : "사용자 카드 파일을 불러오지 못했습니다.",
+        error instanceof Error ? error.message : "사용자 카드 목록을 불러오지 못했습니다.",
       );
     } finally {
       setIsLoadingUser(false);
     }
   }
 
-  async function searchCatalog(page = 1, nextSet = selectedSet) {
+  async function searchCatalog(
+    page = 1,
+    nextSet = selectedSet,
+    nextRarity = selectedRarity || undefined,
+  ) {
     setIsSearchingCatalog(true);
     setCatalogError(null);
 
@@ -228,6 +271,10 @@ export function CardListApp({
 
       if (nextSet) {
         query.set("setId", String(nextSet.id));
+      }
+
+      if (nextRarity) {
+        query.set("rarity", nextRarity);
       }
 
       const response = await fetch(`/api/catalog/cards?${query.toString()}`, {
@@ -284,6 +331,18 @@ export function CardListApp({
     setSelectedSet(nextSet);
     setSelectedMaster(null);
     void searchCatalog(1, nextSet);
+  }
+
+  function handleRarityChange(nextRarity: string) {
+    setSelectedRarity(nextRarity);
+    setSelectedMaster(null);
+    resetCatalogResults();
+
+    if (selectedSeriesName && !selectedSet) {
+      return;
+    }
+
+    void searchCatalog(1, selectedSet, nextRarity || undefined);
   }
 
   function handleCatalogSearch(page = 1) {
@@ -430,10 +489,10 @@ export function CardListApp({
       <section className="panel">
         <div className="panel-header">
           <div>
-            <h2>사용자 목록 파일 불러오기</h2>
+            <h2>사용자 목록 불러오기</h2>
             <p>
-              사용자 ID를 입력하면 해당 ID의 TXT 파일을 읽습니다. 파일이 없으면 빈
-              목록으로 시작하고, 첫 저장 시 파일이 생성됩니다.
+              사용자 ID를 입력하면 해당 ID의 Supabase Storage 문서를 읽습니다.
+              문서가 없으면 빈 목록으로 시작하고, 첫 저장 시 자동 생성됩니다.
             </p>
           </div>
           <span className="storage-pill">{personalStorageLabel}</span>
@@ -465,9 +524,9 @@ export function CardListApp({
         </div>
 
         <div className="meta-strip">
-          <span>저장 방식: 사용자별 TXT 파일</span>
+          <span>저장 방식: Supabase Storage JSON 문서</span>
           <span>마스터 소스: {catalogSourceLabel}</span>
-          <span>파일 경로: {storagePath ?? "아직 불러오지 않음"}</span>
+          <span>스토리지 경로: {storagePath ?? "아직 불러오지 않음"}</span>
         </div>
       </section>
 
@@ -484,9 +543,13 @@ export function CardListApp({
             setOptions={setOptions}
             selectedSetId={selectedSet?.id ?? null}
             setPending={isLoadingSets}
+            rarityOptions={rarityOptions}
+            selectedRarity={selectedRarity}
+            rarityPending={isLoadingRarities}
             error={catalogError}
             seriesError={seriesError}
             setError={setError}
+            rarityError={rarityError}
             page={catalogPage}
             pageSize={CATALOG_PAGE_SIZE}
             totalPages={catalogTotalPages}
@@ -499,6 +562,7 @@ export function CardListApp({
               void handleSeriesChange(seriesName);
             }}
             onSetChange={handleSetChange}
+            onRarityChange={handleRarityChange}
             onSelect={(card) => {
               setSelectedMaster(card);
               setEditingCard(null);
@@ -514,7 +578,7 @@ export function CardListApp({
               <h2>{editingCard ? "내 카드 수정" : "내 카드 저장"}</h2>
               <p>
                 마스터 카드 정보는 읽기 전용입니다. 여기서는 수량, 상태, 메모,
-                구매일만 사용자 파일에 저장합니다.
+                구매일만 사용자 스토리지 문서에 저장합니다.
               </p>
             </div>
             <span className="storage-pill">{activeUserId ?? "사용자 미선택"}</span>

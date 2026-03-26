@@ -12,14 +12,14 @@ export default function HomePage() {
           </div>
           <div className="hero-note">
             <span>구조</span>
-            <strong>Read: Supabase / Write: TXT</strong>
+            <strong>Read: Supabase / Write: Storage</strong>
           </div>
         </div>
       </section>
 
       <CardListApp
         catalogSourceLabel="Supabase public.card_sets + public.cards"
-        personalStorageLabel="data/user-lists/<userId>.txt"
+        personalStorageLabel="Supabase Storage user-collections/<userId>.json"
       />
     </main>
   );

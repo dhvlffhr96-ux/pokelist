@@ -13,15 +13,19 @@ type CatalogSearchPanelProps = {
   pending: boolean;
   seriesPending: boolean;
   setPending: boolean;
+  rarityPending: boolean;
   results: CardMaster[];
   seriesOptions: CardSeriesSummary[];
   setOptions: CardSetSummary[];
+  rarityOptions: string[];
   selectedCardId: number | null;
   selectedSeriesName: string;
   selectedSetId: number | null;
+  selectedRarity: string;
   error?: string | null;
   seriesError?: string | null;
   setError?: string | null;
+  rarityError?: string | null;
   page: number;
   pageSize: number;
   totalPages: number;
@@ -32,6 +36,7 @@ type CatalogSearchPanelProps = {
   onPageChange: (page: number) => void;
   onSeriesChange: (seriesName: string) => void;
   onSetChange: (setId: string) => void;
+  onRarityChange: (rarity: string) => void;
   onSelect: (card: CardMaster) => void;
 };
 
@@ -44,15 +49,19 @@ export function CatalogSearchPanel({
   pending,
   seriesPending,
   setPending,
+  rarityPending,
   results,
   seriesOptions,
   setOptions,
+  rarityOptions,
   selectedCardId,
   selectedSeriesName,
   selectedSetId,
+  selectedRarity,
   error,
   seriesError,
   setError,
+  rarityError,
   page,
   pageSize,
   totalPages,
@@ -63,6 +72,7 @@ export function CatalogSearchPanel({
   onPageChange,
   onSeriesChange,
   onSetChange,
+  onRarityChange,
   onSelect,
 }: CatalogSearchPanelProps) {
   const [previewCard, setPreviewCard] = useState<CardMaster | null>(null);
@@ -162,13 +172,34 @@ export function CatalogSearchPanel({
                 ))}
               </select>
             </div>
+
+            <div className="field">
+              <label htmlFor="rarity">레어도</label>
+              <select
+                id="rarity"
+                value={selectedRarity}
+                onChange={(event) => onRarityChange(event.target.value)}
+                disabled={rarityPending}
+              >
+                <option value="">
+                  {rarityPending ? "레어도 불러오는 중..." : "전체 레어도"}
+                </option>
+                {rarityOptions.map((rarity) => (
+                  <option key={rarity} value={rarity}>
+                    {rarity}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {seriesError ? <div className="alert alert-error">{seriesError}</div> : null}
           {setError ? <div className="alert alert-error">{setError}</div> : null}
+          {rarityError ? <div className="alert alert-error">{rarityError}</div> : null}
 
           <div className="filter-help">
-            시리즈를 먼저 고른 뒤 세트를 선택하면 해당 세트 카드만 10개씩 볼 수 있습니다.
+            시리즈를 먼저 고른 뒤 세트를 선택하면 해당 세트 카드만 10개씩 볼 수 있고,
+            레어도도 함께 좁혀서 볼 수 있습니다.
           </div>
         </div>
 

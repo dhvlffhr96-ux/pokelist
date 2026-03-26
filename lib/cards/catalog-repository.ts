@@ -256,8 +256,8 @@ export class CatalogRepository {
       .eq("game", "pokemon")
       .eq("language", "ko")
       .eq("is_active", true)
-      .order("release_date", { ascending: false, nullsFirst: false })
-      .order("id", { ascending: false })
+      .order("release_date", { ascending: true, nullsFirst: false })
+      .order("id", { ascending: true })
       .limit(limit);
 
     if (seriesName) {
@@ -273,16 +273,53 @@ export class CatalogRepository {
     return (data as CardSetRow[]).map(mapSetRow);
   }
 
+  async listCardRarities() {
+    const supabase = createSupabaseAdminClient();
+    const raritySet = new Set<string>();
+    const pageSize = 1000;
+
+    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+      const from = pageIndex * pageSize;
+      const to = from + pageSize - 1;
+      const { data, error } = await supabase
+        .from("cards")
+        .select("rarity")
+        .eq("game", "pokemon")
+        .eq("language", "ko")
+        .eq("is_active", true)
+        .order("id", { ascending: true })
+        .range(from, to);
+
+      if (error) {
+        throw new Error(`카드 레어도 조회 실패: ${error.message}`);
+      }
+
+      for (const row of data ?? []) {
+        if (row.rarity) {
+          raritySet.add(row.rarity);
+        }
+      }
+
+      if (!data || data.length < pageSize) {
+        break;
+      }
+    }
+
+    return [...raritySet].sort((left, right) => left.localeCompare(right, "ko-KR"));
+  }
+
   async searchCards({
     query,
     page,
     pageSize,
     setId,
+    rarity,
   }: {
     query: string;
     page: number;
     pageSize: number;
     setId?: number;
+    rarity?: string;
   }): Promise<PaginatedResult<CardMaster>> {
     const supabase = createSupabaseAdminClient();
     const sanitizedQuery = sanitizeSearchTerm(query);
@@ -294,6 +331,10 @@ export class CatalogRepository {
 
       if (setId) {
         nextRequest = nextRequest.eq("set_id", setId);
+      }
+
+      if (rarity) {
+        nextRequest = nextRequest.eq("rarity", rarity);
       }
 
       if (sanitizedQuery) {

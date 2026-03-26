@@ -1,7 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { z } from "zod";
 import { getAppEnv } from "@/lib/env";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
 import type {
   CardMaster,
   CreateOwnedCardInput,
@@ -79,59 +78,122 @@ function createEmptyCollection(userId: string): UserCollectionFile {
   };
 }
 
-export class FileCollectionRepository {
-  private getStorageRoot() {
-    return path.join(
-      /* turbopackIgnore: true */ process.cwd(),
-      getAppEnv().userListStorageDir,
-    );
+function isMissingObjectError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
   }
 
-  private async ensureStorageRoot() {
-    await mkdir(this.getStorageRoot(), { recursive: true });
+  const statusCode =
+    "statusCode" in error && error.statusCode !== null ? String(error.statusCode) : "";
+  const message =
+    "message" in error && typeof error.message === "string"
+      ? error.message.toLowerCase()
+      : "";
+
+  return (
+    statusCode === "404" ||
+    message.includes("not found") ||
+    message.includes("no such object")
+  );
+}
+
+function isMissingBucketError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
   }
 
-  private getFilePath(userId: string) {
-    return path.join(this.getStorageRoot(), `${userId}.txt`);
+  const message =
+    "message" in error && typeof error.message === "string"
+      ? error.message.toLowerCase()
+      : "";
+
+  return message.includes("bucket") && message.includes("not found");
+}
+
+export class StorageCollectionRepository {
+  private getBucketName() {
+    return getAppEnv().userCollectionBucket;
+  }
+
+  private getObjectPath(userId: string) {
+    return `${userId}.json`;
   }
 
   getStoragePath(userId: string) {
-    return this.getFilePath(userId);
+    return `supabase://${this.getBucketName()}/${this.getObjectPath(userId)}`;
   }
 
   async readUserCollection(userId: string) {
-    await this.ensureStorageRoot();
-    const filePath = this.getFilePath(userId);
+    const supabase = createSupabaseAdminClient();
+    const { data, error } = await supabase
+      .storage
+      .from(this.getBucketName())
+      .download(this.getObjectPath(userId));
+
+    if (error) {
+      if (isMissingBucketError(error)) {
+        throw new Error(
+          `Supabase Storage 버킷 "${this.getBucketName()}"를 찾지 못했습니다.`,
+        );
+      }
+
+      if (isMissingObjectError(error)) {
+        return createEmptyCollection(userId);
+      }
+
+      throw new Error("사용자 카드 목록을 스토리지에서 읽지 못했습니다.");
+    }
+
+    if (!data) {
+      throw new Error("사용자 카드 목록을 스토리지에서 읽지 못했습니다.");
+    }
 
     try {
-      const raw = await readFile(filePath, "utf8");
+      const raw = await data.text();
       const parsed = userCollectionFileSchema.parse(JSON.parse(raw));
+
+      if (parsed.userId !== userId) {
+        throw new Error("사용자 ID와 저장된 문서가 일치하지 않습니다.");
+      }
 
       return {
         ...parsed,
         items: sortItems(parsed.items),
       };
-    } catch (error) {
-      if (isMissingFileError(error)) {
-        return createEmptyCollection(userId);
-      }
-
-      throw new Error("사용자 카드 파일을 읽지 못했습니다.");
+    } catch {
+      throw new Error("사용자 카드 목록 문서 형식이 올바르지 않습니다.");
     }
   }
 
   async writeUserCollection(collection: UserCollectionFile) {
-    await this.ensureStorageRoot();
-
-    const filePath = this.getFilePath(collection.userId);
-    const tempPath = `${filePath}.tmp`;
+    const supabase = createSupabaseAdminClient();
     const normalized = {
       ...collection,
       items: sortItems(collection.items),
     };
+    const payload = `${JSON.stringify(normalized, null, 2)}\n`;
+    const { error } = await supabase
+      .storage
+      .from(this.getBucketName())
+      .upload(
+        this.getObjectPath(collection.userId),
+        new Blob([payload], { type: "application/json; charset=utf-8" }),
+        {
+          contentType: "application/json; charset=utf-8",
+          upsert: true,
+          cacheControl: "0",
+        },
+      );
 
-    await writeFile(tempPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
-    await rename(tempPath, filePath);
+    if (error) {
+      if (isMissingBucketError(error)) {
+        throw new Error(
+          `Supabase Storage 버킷 "${this.getBucketName()}"를 찾지 못했습니다.`,
+        );
+      }
+
+      throw new Error("사용자 카드 목록을 스토리지에 저장하지 못했습니다.");
+    }
 
     return normalized;
   }
@@ -225,13 +287,4 @@ export class FileCollectionRepository {
       items: collection.items.filter((item) => item.id !== itemId),
     });
   }
-}
-
-function isMissingFileError(error: unknown) {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "ENOENT"
-  );
 }

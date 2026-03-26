@@ -1,5 +1,5 @@
 import { CatalogRepository } from "@/lib/cards/catalog-repository";
-import { FileCollectionRepository } from "@/lib/cards/file-collection-repository";
+import { StorageCollectionRepository } from "@/lib/cards/storage-collection-repository";
 import {
   catalogQuerySchema,
   catalogSeriesQuerySchema,
@@ -12,19 +12,21 @@ import type {
 } from "@/lib/cards/types";
 
 const catalogRepository = new CatalogRepository();
-const fileCollectionRepository = new FileCollectionRepository();
+const storageCollectionRepository = new StorageCollectionRepository();
 
 export async function searchCatalogCards(params: {
   query?: string;
   page?: number;
   pageSize?: number;
   setId?: number;
+  rarity?: string;
 }) {
   const parsed = catalogQuerySchema.parse({
     q: params.query,
     page: params.page,
     pageSize: params.pageSize,
     setId: params.setId,
+    rarity: params.rarity,
   });
 
   return catalogRepository.searchCards({
@@ -32,6 +34,7 @@ export async function searchCatalogCards(params: {
     page: parsed.page,
     pageSize: parsed.pageSize,
     setId: parsed.setId,
+    rarity: parsed.rarity,
   });
 }
 
@@ -50,13 +53,17 @@ export async function listCatalogSeries(limit = 100) {
   return catalogRepository.listCardSeries(parsed.limit);
 }
 
+export async function listCatalogRarities() {
+  return catalogRepository.listCardRarities();
+}
+
 export async function listUserCollection(userId: string) {
   const normalizedUserId = userIdSchema.parse(userId);
-  const collection = await fileCollectionRepository.readUserCollection(normalizedUserId);
+  const collection = await storageCollectionRepository.readUserCollection(normalizedUserId);
 
   return {
     ...collection,
-    storagePath: fileCollectionRepository.getStoragePath(normalizedUserId),
+    storagePath: storageCollectionRepository.getStoragePath(normalizedUserId),
   };
 }
 
@@ -68,7 +75,7 @@ export async function addOwnedCard(userId: string, input: CreateOwnedCardInput) 
     throw new Error("선택한 마스터 카드를 찾지 못했습니다.");
   }
 
-  return fileCollectionRepository.upsertOwnedCard(normalizedUserId, card, input);
+  return storageCollectionRepository.upsertOwnedCard(normalizedUserId, card, input);
 }
 
 export async function updateOwnedCard(
@@ -78,11 +85,11 @@ export async function updateOwnedCard(
 ) {
   const normalizedUserId = userIdSchema.parse(userId);
 
-  return fileCollectionRepository.updateOwnedCard(normalizedUserId, itemId, input);
+  return storageCollectionRepository.updateOwnedCard(normalizedUserId, itemId, input);
 }
 
 export async function deleteOwnedCard(userId: string, itemId: string) {
   const normalizedUserId = userIdSchema.parse(userId);
 
-  return fileCollectionRepository.deleteOwnedCard(normalizedUserId, itemId);
+  return storageCollectionRepository.deleteOwnedCard(normalizedUserId, itemId);
 }
