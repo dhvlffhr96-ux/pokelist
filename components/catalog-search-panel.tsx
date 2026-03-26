@@ -1,0 +1,320 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  CARD_TYPE_LABELS,
+  type CardMaster,
+  type CardSeriesSummary,
+  type CardSetSummary,
+} from "@/lib/cards/types";
+
+type CatalogSearchPanelProps = {
+  query: string;
+  pending: boolean;
+  seriesPending: boolean;
+  setPending: boolean;
+  results: CardMaster[];
+  seriesOptions: CardSeriesSummary[];
+  setOptions: CardSetSummary[];
+  selectedCardId: number | null;
+  selectedSeriesName: string;
+  selectedSetId: number | null;
+  error?: string | null;
+  seriesError?: string | null;
+  setError?: string | null;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  totalCount: number;
+  searchDisabled: boolean;
+  onQueryChange: (query: string) => void;
+  onSearch: () => void;
+  onPageChange: (page: number) => void;
+  onSeriesChange: (seriesName: string) => void;
+  onSetChange: (setId: string) => void;
+  onSelect: (card: CardMaster) => void;
+};
+
+function getPreviewImageSrc(card: CardMaster) {
+  return card.thumbnailUrl ?? card.imageUrl;
+}
+
+export function CatalogSearchPanel({
+  query,
+  pending,
+  seriesPending,
+  setPending,
+  results,
+  seriesOptions,
+  setOptions,
+  selectedCardId,
+  selectedSeriesName,
+  selectedSetId,
+  error,
+  seriesError,
+  setError,
+  page,
+  pageSize,
+  totalPages,
+  totalCount,
+  searchDisabled,
+  onQueryChange,
+  onSearch,
+  onPageChange,
+  onSeriesChange,
+  onSetChange,
+  onSelect,
+}: CatalogSearchPanelProps) {
+  const [previewCard, setPreviewCard] = useState<CardMaster | null>(null);
+
+  useEffect(() => {
+    if (!previewCard) {
+      return;
+    }
+
+    function handleKeydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setPreviewCard(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeydown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [previewCard]);
+
+  return (
+    <>
+      <div className="panel-stack">
+        <div className="panel-header">
+          <div>
+            <h2>Supabase 카드 마스터 검색</h2>
+            <p>
+              `cards`와 `card_sets`는 조회만 하고, 저장은 하지 않습니다. 카드명,
+              카드번호, 로컬 코드 기준으로 검색합니다.
+            </p>
+          </div>
+          <span className="storage-pill">읽기 전용</span>
+        </div>
+
+        {error ? <div className="alert alert-error">{error}</div> : null}
+
+        <div className="toolbar">
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="예: 피카츄, 012/106, sv5k"
+            disabled={pending}
+          />
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={onSearch}
+            disabled={pending || searchDisabled}
+          >
+            {pending ? "검색 중..." : "카드 검색"}
+          </button>
+        </div>
+
+        <div className="filter-section">
+          <div className="filter-grid">
+            <div className="field">
+              <label htmlFor="seriesName">시리즈 선택</label>
+              <select
+                id="seriesName"
+                value={selectedSeriesName}
+                onChange={(event) => onSeriesChange(event.target.value)}
+                disabled={seriesPending}
+              >
+                <option value="">
+                  {seriesPending ? "시리즈 불러오는 중..." : "시리즈를 선택하세요"}
+                </option>
+                {seriesOptions.map((series) => (
+                  <option key={series.name} value={series.name}>
+                    {series.name} ({series.setCount})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field">
+              <label htmlFor="setNameKo">세트 선택</label>
+              <select
+                id="setNameKo"
+                value={selectedSetId ? String(selectedSetId) : ""}
+                onChange={(event) => onSetChange(event.target.value)}
+                disabled={!selectedSeriesName || setPending}
+              >
+                <option value="">
+                  {!selectedSeriesName
+                    ? "먼저 시리즈를 선택하세요"
+                    : setPending
+                      ? "세트 불러오는 중..."
+                      : "세트를 선택하세요"}
+                </option>
+                {setOptions.map((set) => (
+                  <option key={set.id} value={String(set.id)}>
+                    {set.setNameKo}
+                    {set.setCode ? ` · ${set.setCode}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {seriesError ? <div className="alert alert-error">{seriesError}</div> : null}
+          {setError ? <div className="alert alert-error">{setError}</div> : null}
+
+          <div className="filter-help">
+            시리즈를 먼저 고른 뒤 세트를 선택하면 해당 세트 카드만 10개씩 볼 수 있습니다.
+          </div>
+        </div>
+
+        {results.length === 0 ? (
+          <div className="empty-state">
+            아직 검색 결과가 없습니다.
+            <br />
+            검색 버튼을 눌러 카드 마스터를 조회해 보세요.
+          </div>
+        ) : (
+          <div className="results-shell">
+            <div className="results-meta">
+              <span>
+                총 {totalCount}개 중 {results.length}개 표시
+              </span>
+              <span>
+                {page} / {totalPages} 페이지
+              </span>
+              <span>페이지당 {pageSize}개</span>
+              <span>결과 영역만 스크롤됩니다.</span>
+              <span>사진을 누르면 크게 볼 수 있습니다.</span>
+            </div>
+
+            <div className="scroll-area catalog-scroll-area">
+              <div className="catalog-grid">
+                {results.map((card) => {
+                  const previewImageSrc = getPreviewImageSrc(card);
+
+                  return (
+                    <article
+                      className={`catalog-card ${selectedCardId === card.id ? "catalog-card-selected" : ""}`}
+                      key={card.id}
+                    >
+                      <div className="catalog-card-media">
+                        {previewImageSrc ? (
+                          <button
+                            className="catalog-card-image-button"
+                            type="button"
+                            onClick={() => setPreviewCard(card)}
+                            aria-label={`${card.cardNameKo} 이미지 크게 보기`}
+                          >
+                            {/* External master thumbnails can come from multiple hosts. */}
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={previewImageSrc} alt={card.cardNameKo} />
+                          </button>
+                        ) : (
+                          <div className="catalog-card-fallback">NO IMAGE</div>
+                        )}
+                      </div>
+
+                      <div className="catalog-card-body">
+                        <div className="catalog-card-header">
+                          <div>
+                            <h3>{card.cardNameKo}</h3>
+                            <p>{card.set.setNameKo}</p>
+                          </div>
+                          {selectedCardId === card.id ? (
+                            <span className="status-pill">선택됨</span>
+                          ) : null}
+                        </div>
+
+                        <div className="catalog-card-meta">
+                          <span>번호 {card.cardNo}</span>
+                          <span>희귀도 {card.rarity}</span>
+                          <span>유형 {CARD_TYPE_LABELS[card.cardType]}</span>
+                          <span>로컬 코드 {card.localCode ?? "없음"}</span>
+                        </div>
+
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          onClick={() => onSelect(card)}
+                        >
+                          이 카드 선택
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+
+            {totalPages > 1 ? (
+              <div className="pagination">
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={() => onPageChange(page - 1)}
+                  disabled={page <= 1 || pending}
+                >
+                  이전 10개
+                </button>
+                <div className="pagination-status">
+                  <strong>{page}</strong>
+                  <span>/ {totalPages}</span>
+                </div>
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={() => onPageChange(page + 1)}
+                  disabled={page >= totalPages || pending}
+                >
+                  다음 10개
+                </button>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
+
+      {previewCard ? (
+        <div
+          className="image-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${previewCard.cardNameKo} 이미지 미리보기`}
+          onClick={() => setPreviewCard(null)}
+        >
+          <div className="image-lightbox-content" onClick={(event) => event.stopPropagation()}>
+            <div className="image-lightbox-header">
+              <div>
+                <strong>{previewCard.cardNameKo}</strong>
+                <span>
+                  {previewCard.set.setNameKo} · {previewCard.cardNo}
+                </span>
+              </div>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => setPreviewCard(null)}
+              >
+                닫기
+              </button>
+            </div>
+
+            <div className="image-lightbox-body">
+              {/* External master images can come from multiple hosts. */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewCard.imageUrl ?? getPreviewImageSrc(previewCard) ?? ""}
+                alt={previewCard.cardNameKo}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
