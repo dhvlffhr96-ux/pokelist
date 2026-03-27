@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import { listCatalogRarities } from "@/lib/cards/service";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const rarities = await listCatalogRarities();
+    const setId = request.nextUrl.searchParams.get("setId");
+    const rarities = await listCatalogRarities(setId ? Number(setId) : undefined);
 
     return NextResponse.json({ data: rarities });
   } catch (error) {

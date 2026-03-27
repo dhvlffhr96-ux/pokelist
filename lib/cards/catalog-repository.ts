@@ -225,6 +225,70 @@ function mapRarityMetaRow(row: CardRarityMetaRow): CardRarityMeta {
   };
 }
 
+function sortRarityMetas(left: CardRarityMeta, right: CardRarityMeta) {
+  if (left.sortOrder !== null && right.sortOrder !== null && left.sortOrder !== right.sortOrder) {
+    return left.sortOrder - right.sortOrder;
+  }
+
+  if (left.sortOrder !== null && right.sortOrder === null) {
+    return -1;
+  }
+
+  if (left.sortOrder === null && right.sortOrder !== null) {
+    return 1;
+  }
+
+  const leftLabel = left.rarityCode ?? left.displayNameKo ?? left.displayNameEn ?? left.rarityName;
+  const rightLabel =
+    right.rarityCode ?? right.displayNameKo ?? right.displayNameEn ?? right.rarityName;
+
+  return leftLabel.localeCompare(rightLabel, "ko-KR");
+}
+
+function groupRarityMetas(rows: CardRarityMeta[]) {
+  const grouped = new Map<string, CardRarityMeta>();
+
+  for (const row of rows) {
+    const existing = grouped.get(row.filterKey);
+
+    if (!existing) {
+      grouped.set(row.filterKey, row);
+      continue;
+    }
+
+    grouped.set(row.filterKey, {
+      ...existing,
+      rarityName: existing.rarityName || row.rarityName,
+      rarityCode: existing.rarityCode ?? row.rarityCode,
+      displayNameKo: existing.displayNameKo ?? row.displayNameKo,
+      displayNameEn: existing.displayNameEn ?? row.displayNameEn,
+      sortOrder:
+        existing.sortOrder === null
+          ? row.sortOrder
+          : row.sortOrder === null
+            ? existing.sortOrder
+            : Math.min(existing.sortOrder, row.sortOrder),
+      badgeTone: existing.badgeTone ?? row.badgeTone,
+      filterValues: [...new Set([...existing.filterValues, ...row.filterValues])],
+    });
+  }
+
+  return [...grouped.values()].sort(sortRarityMetas);
+}
+
+function createFallbackRarityMeta(value: string): CardRarityMeta {
+  return {
+    filterKey: value,
+    rarityName: value,
+    rarityCode: value,
+    displayNameKo: null,
+    displayNameEn: null,
+    sortOrder: null,
+    badgeTone: null,
+    filterValues: [value],
+  };
+}
+
 export class CatalogRepository {
   async listCardSeries(limit: number) {
     const supabase = createSupabaseAdminClient();
@@ -321,66 +385,60 @@ export class CatalogRepository {
     return (data as CardSetRow[]).map(mapSetRow);
   }
 
-  async listCardRarities() {
+  async listCardRarities(setId?: number) {
     const supabase = createSupabaseAdminClient();
-    const { data, error } = await supabase
-      .from("card_rarity_meta")
-      .select(
-        "rarity_name, rarity_code, display_name_ko, display_name_en, sort_order, badge_tone",
-      )
-      .order("sort_order", { ascending: true, nullsFirst: false })
-      .order("display_name_ko", { ascending: true, nullsFirst: false })
-      .order("rarity_name", { ascending: true });
+    let rarityValueRequest = supabase
+      .from("cards")
+      .select("rarity")
+      .eq("game", "pokemon")
+      .eq("language", "ko")
+      .eq("is_active", true);
+
+    if (setId) {
+      rarityValueRequest = rarityValueRequest.eq("set_id", setId);
+    }
+
+    const [{ data: rarityValueRows, error: rarityValueError }, { data, error }] =
+      await Promise.all([
+        rarityValueRequest,
+        supabase
+          .from("card_rarity_meta")
+          .select(
+            "rarity_name, rarity_code, display_name_ko, display_name_en, sort_order, badge_tone",
+          )
+          .order("sort_order", { ascending: true, nullsFirst: false })
+          .order("display_name_ko", { ascending: true, nullsFirst: false })
+          .order("rarity_name", { ascending: true }),
+      ]);
+
+    if (rarityValueError) {
+      throw new Error(`카드 레어도 값 조회 실패: ${rarityValueError.message}`);
+    }
 
     if (error) {
       throw new Error(`카드 레어도 메타 조회 실패: ${error.message}`);
     }
 
-    const grouped = new Map<string, CardRarityMeta>();
+    const availableRarityValues = new Set(
+      (rarityValueRows ?? [])
+        .map((row) => row.rarity?.trim())
+        .filter((value): value is string => Boolean(value)),
+    );
+    const grouped = groupRarityMetas((data as CardRarityMetaRow[]).map(mapRarityMetaRow));
 
-    for (const row of (data as CardRarityMetaRow[]).map(mapRarityMetaRow)) {
-      const existing = grouped.get(row.filterKey);
-
-      if (!existing) {
-        grouped.set(row.filterKey, row);
-        continue;
-      }
-
-      grouped.set(row.filterKey, {
-        ...existing,
-        rarityName: existing.rarityName || row.rarityName,
-        rarityCode: existing.rarityCode ?? row.rarityCode,
-        displayNameKo: existing.displayNameKo ?? row.displayNameKo,
-        displayNameEn: existing.displayNameEn ?? row.displayNameEn,
-        sortOrder:
-          existing.sortOrder === null
-            ? row.sortOrder
-            : row.sortOrder === null
-              ? existing.sortOrder
-              : Math.min(existing.sortOrder, row.sortOrder),
-        badgeTone: existing.badgeTone ?? row.badgeTone,
-        filterValues: [...new Set([...existing.filterValues, ...row.filterValues])],
-      });
+    if (availableRarityValues.size === 0) {
+      return grouped;
     }
 
-    return [...grouped.values()].sort((left, right) => {
-      if (left.sortOrder !== null && right.sortOrder !== null && left.sortOrder !== right.sortOrder) {
-        return left.sortOrder - right.sortOrder;
-      }
+    const filtered = grouped.filter((rarity) =>
+      rarity.filterValues.some((value) => availableRarityValues.has(value)),
+    );
+    const coveredValues = new Set(filtered.flatMap((rarity) => rarity.filterValues));
+    const fallback = [...availableRarityValues]
+      .filter((value) => !coveredValues.has(value))
+      .map(createFallbackRarityMeta);
 
-      if (left.sortOrder !== null && right.sortOrder === null) {
-        return -1;
-      }
-
-      if (left.sortOrder === null && right.sortOrder !== null) {
-        return 1;
-      }
-
-      const leftLabel = left.rarityCode ?? left.displayNameKo ?? left.displayNameEn ?? left.rarityName;
-      const rightLabel = right.rarityCode ?? right.displayNameKo ?? right.displayNameEn ?? right.rarityName;
-
-      return leftLabel.localeCompare(rightLabel, "ko-KR");
-    });
+    return [...filtered, ...fallback].sort(sortRarityMetas);
   }
 
   async searchCards({

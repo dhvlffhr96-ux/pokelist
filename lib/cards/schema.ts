@@ -51,6 +51,10 @@ export const catalogSeriesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(100),
 });
 
+export const catalogRarityQuerySchema = z.object({
+  setId: z.coerce.number().int().positive().optional(),
+});
+
 export type CollectionFormValues = {
   quantity: string;
   condition: CardCondition;

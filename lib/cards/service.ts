@@ -2,6 +2,7 @@ import { CatalogRepository } from "@/lib/cards/catalog-repository";
 import { StorageCollectionRepository } from "@/lib/cards/storage-collection-repository";
 import {
   catalogQuerySchema,
+  catalogRarityQuerySchema,
   catalogSeriesQuerySchema,
   catalogSetQuerySchema,
   userIdSchema,
@@ -53,8 +54,12 @@ export async function listCatalogSeries(limit = 100) {
   return catalogRepository.listCardSeries(parsed.limit);
 }
 
-export async function listCatalogRarities() {
-  return catalogRepository.listCardRarities();
+export async function listCatalogRarities(setId?: number) {
+  const parsed = catalogRarityQuerySchema.parse({
+    setId,
+  });
+
+  return catalogRepository.listCardRarities(parsed.setId);
 }
 
 export async function listUserCollection(userId: string) {

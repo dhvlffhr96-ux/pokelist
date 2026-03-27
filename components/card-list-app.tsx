@@ -147,6 +147,40 @@ export function CardListApp({
   const totalQuantity = cards.reduce((sum, card) => sum + card.quantity, 0);
   const uniqueSets = new Set(cards.map((card) => card.card.setNameKo)).size;
 
+  const loadRarityOptions = useCallback(async (setId?: number) => {
+    setIsLoadingRarities(true);
+    setRarityError(null);
+
+    try {
+      const query = new URLSearchParams();
+
+      if (setId) {
+        query.set("setId", String(setId));
+      }
+
+      const response = await fetch(
+        query.size > 0 ? `/api/catalog/rarities?${query.toString()}` : "/api/catalog/rarities",
+        {
+          cache: "no-store",
+        },
+      );
+      const result = (await response.json()) as ApiResponse<CardRarityMeta[]>;
+
+      if (!response.ok || !result.data) {
+        throw new Error(result.error ?? "카드 레어도 조회에 실패했습니다.");
+      }
+
+      setRarityOptions(result.data);
+
+      return result.data;
+    } catch (error) {
+      setRarityError(error instanceof Error ? error.message : "카드 레어도 조회에 실패했습니다.");
+      return null;
+    } finally {
+      setIsLoadingRarities(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!isCatalogMode) {
       return;
@@ -154,18 +188,13 @@ export function CardListApp({
 
     async function loadInitialFilters() {
       setIsLoadingSeries(true);
-      setIsLoadingRarities(true);
       setSeriesError(null);
-      setRarityError(null);
 
       const seriesQuery = new URLSearchParams({
         limit: "200",
       });
-      const [seriesSettled, raritySettled] = await Promise.allSettled([
+      const [seriesSettled] = await Promise.allSettled([
         fetch(`/api/catalog/series?${seriesQuery.toString()}`, {
-          cache: "no-store",
-        }),
-        fetch("/api/catalog/rarities", {
           cache: "no-store",
         }),
       ]);
@@ -191,32 +220,11 @@ export function CardListApp({
         setSeriesError("카드 시리즈 조회에 실패했습니다.");
         setIsLoadingSeries(false);
       }
-
-      if (raritySettled.status === "fulfilled") {
-        try {
-          const rarityResult =
-            (await raritySettled.value.json()) as ApiResponse<CardRarityMeta[]>;
-
-          if (!raritySettled.value.ok || !rarityResult.data) {
-            throw new Error(rarityResult.error ?? "카드 레어도 조회에 실패했습니다.");
-          }
-
-          setRarityOptions(rarityResult.data);
-        } catch (error) {
-          setRarityError(
-            error instanceof Error ? error.message : "카드 레어도 조회에 실패했습니다.",
-          );
-        } finally {
-          setIsLoadingRarities(false);
-        }
-      } else {
-        setRarityError("카드 레어도 조회에 실패했습니다.");
-        setIsLoadingRarities(false);
-      }
     }
 
     void loadInitialFilters();
-  }, [isCatalogMode]);
+    void loadRarityOptions();
+  }, [isCatalogMode, loadRarityOptions]);
 
   useEffect(() => {
     if (!selectedMaster && !editingCard) {
@@ -289,6 +297,25 @@ export function CardListApp({
     } finally {
       setIsLoadingSets(false);
     }
+  }
+
+  function syncSelectedRarityWithOptions(options: CardRarityMeta[] | null) {
+    if (!options) {
+      return selectedRarity;
+    }
+
+    if (!selectedRarity) {
+      return "";
+    }
+
+    const isAvailable = options.some((rarity) => rarity.filterKey === selectedRarity);
+
+    if (isAvailable) {
+      return selectedRarity;
+    }
+
+    setSelectedRarity("");
+    return "";
   }
 
   const loadUserCollection = useCallback(
@@ -420,6 +447,8 @@ export function CardListApp({
     setSetOptions([]);
     setSetError(null);
     resetCatalogResults();
+    const globalRarityOptions = await loadRarityOptions();
+    syncSelectedRarityWithOptions(globalRarityOptions);
 
     if (!nextSeriesName) {
       return;
@@ -428,11 +457,13 @@ export function CardListApp({
     await loadSeriesSets(nextSeriesName);
   }
 
-  function handleSetChange(nextSetId: string) {
+  async function handleSetChange(nextSetId: string) {
     if (!nextSetId) {
       setSelectedSet(null);
       setSelectedMaster(null);
       resetCatalogResults();
+      const globalRarityOptions = await loadRarityOptions();
+      syncSelectedRarityWithOptions(globalRarityOptions);
       return;
     }
 
@@ -446,7 +477,9 @@ export function CardListApp({
     setSetError(null);
     setSelectedSet(nextSet);
     setSelectedMaster(null);
-    void searchCatalog(1, nextSet);
+    const nextRarityOptions = await loadRarityOptions(nextSet.id);
+    const nextRarity = syncSelectedRarityWithOptions(nextRarityOptions) || undefined;
+    void searchCatalog(1, nextSet, nextRarity);
   }
 
   function handleRarityChange(nextRarity: string) {
