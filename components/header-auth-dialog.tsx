@@ -87,7 +87,7 @@ export function HeaderAuthDialog({
               id="headerAuthUserId"
               value={userId}
               onChange={(event) => onUserIdChange(event.target.value)}
-              placeholder="예: soulx02"
+              placeholder="예: abcd1234"
               disabled={pending}
             />
           </div>

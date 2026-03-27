@@ -43,6 +43,7 @@ type UserCollectionResponse = {
 };
 
 type CollectionViewMode = "detail" | "compact";
+type CatalogViewMode = "detail" | "compact";
 
 const CATALOG_PAGE_SIZE = 12;
 const LAST_ACTIVE_USER_ID_STORAGE_KEY = "pokelist:last-active-user-id";
@@ -135,6 +136,7 @@ export function CardListApp({
   const [selectedSet, setSelectedSet] = useState<CardSetSummary | null>(null);
   const [rarityOptions, setRarityOptions] = useState<CardRarityMeta[]>([]);
   const [selectedRarity, setSelectedRarity] = useState("");
+  const [catalogViewMode, setCatalogViewMode] = useState<CatalogViewMode>("detail");
   const [collectionQuery, setCollectionQuery] = useState("");
   const [collectionViewMode, setCollectionViewMode] = useState<CollectionViewMode>("detail");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -455,6 +457,34 @@ export function CardListApp({
     }
   }, [sessionUserId, userIdInput]);
 
+  useEffect(() => {
+    if (!isCatalogMode) {
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (window.matchMedia("(max-width: 640px)").matches) {
+      setCatalogViewMode("compact");
+    }
+  }, [isCatalogMode]);
+
+  useEffect(() => {
+    if (!isCollectionMode && !isViewerMode) {
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (window.matchMedia("(max-width: 640px)").matches) {
+      setCollectionViewMode("compact");
+    }
+  }, [isCollectionMode, isViewerMode]);
+
   async function searchCatalog(
     page = 1,
     nextSet = selectedSet,
@@ -732,7 +762,7 @@ export function CardListApp({
                   id="userId"
                   value={userIdInput}
                   onChange={(event) => setUserIdInput(event.target.value)}
-                  placeholder="예: soulx02"
+                  placeholder="예: abcd1234"
                   disabled={isLoadingUser}
                 />
               </div>
@@ -774,6 +804,7 @@ export function CardListApp({
               query={catalogQuery}
               pending={isSearchingCatalog}
               results={catalogResults}
+              viewMode={catalogViewMode}
               selectedCardId={selectedMaster?.id ?? null}
               seriesOptions={seriesOptions}
               selectedSeriesName={selectedSeriesName}
@@ -798,6 +829,7 @@ export function CardListApp({
               onQueryChange={setCatalogQuery}
               onSearch={() => handleCatalogSearch(1)}
               onPageChange={handleCatalogSearch}
+              onViewModeChange={setCatalogViewMode}
               onSeriesChange={(seriesName) => {
                 void handleSeriesChange(seriesName);
               }}

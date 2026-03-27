@@ -16,6 +16,7 @@ type CatalogSearchPanelProps = {
   setPending: boolean;
   rarityPending: boolean;
   results: CardMaster[];
+  viewMode: "detail" | "compact";
   seriesOptions: CardSeriesSummary[];
   setOptions: CardSetSummary[];
   rarityOptions: CardRarityMeta[];
@@ -37,6 +38,7 @@ type CatalogSearchPanelProps = {
   onQueryChange: (query: string) => void;
   onSearch: () => void;
   onPageChange: (page: number) => void;
+  onViewModeChange: (viewMode: "detail" | "compact") => void;
   onSeriesChange: (seriesName: string) => void;
   onSetChange: (setId: string) => void;
   onRarityChange: (rarity: string) => void;
@@ -58,6 +60,7 @@ export function CatalogSearchPanel({
   setPending,
   rarityPending,
   results,
+  viewMode,
   seriesOptions,
   setOptions,
   rarityOptions,
@@ -79,6 +82,7 @@ export function CatalogSearchPanel({
   onQueryChange,
   onSearch,
   onPageChange,
+  onViewModeChange,
   onSeriesChange,
   onSetChange,
   onRarityChange,
@@ -212,6 +216,27 @@ export function CatalogSearchPanel({
           </div>
         </div>
 
+        <div className="view-switch" role="tablist" aria-label="카드 검색 보기 방식">
+          <button
+            className={`view-switch-button ${viewMode === "detail" ? "view-switch-button-active" : ""}`}
+            type="button"
+            role="tab"
+            aria-selected={viewMode === "detail"}
+            onClick={() => onViewModeChange("detail")}
+          >
+            상세 보기
+          </button>
+          <button
+            className={`view-switch-button ${viewMode === "compact" ? "view-switch-button-active" : ""}`}
+            type="button"
+            role="tab"
+            aria-selected={viewMode === "compact"}
+            onClick={() => onViewModeChange("compact")}
+          >
+            간단 보기
+          </button>
+        </div>
+
         {results.length === 0 ? (
           <div className="empty-state">
             아직 검색 결과가 없습니다.
@@ -232,10 +257,68 @@ export function CatalogSearchPanel({
               <span>사진을 누르면 크게 볼 수 있습니다.</span>
             </div>
 
-            <div className="catalog-grid">
+            <div className={`catalog-grid ${viewMode === "compact" ? "catalog-grid-compact" : ""}`}>
               {results.map((card) => {
                 const previewImageSrc = getPreviewImageSrc(card);
                 const isSelected = selectedCardId === card.id;
+
+                if (viewMode === "compact") {
+                  return (
+                    <article
+                      className={`catalog-card-compact ${selectionEnabled ? "catalog-card-interactive" : "catalog-card-readonly"} ${isSelected ? "catalog-card-selected" : ""}`}
+                      key={card.id}
+                      role={selectionEnabled ? "button" : undefined}
+                      tabIndex={selectionEnabled ? 0 : undefined}
+                      onClick={() => {
+                        if (selectionEnabled) {
+                          onSelect(card);
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (!selectionEnabled) {
+                          return;
+                        }
+
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onSelect(card);
+                        }
+                      }}
+                      aria-label={`${card.cardNameKo} 카드 추가 창 열기`}
+                    >
+                      <div className="catalog-card-compact-media">
+                        {previewImageSrc ? (
+                          <button
+                            className="catalog-card-image-button"
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setPreviewCard(card);
+                            }}
+                            aria-label={`${card.cardNameKo} 이미지 크게 보기`}
+                          >
+                            {/* External master thumbnails can come from multiple hosts. */}
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={previewImageSrc} alt={card.cardNameKo} />
+                          </button>
+                        ) : (
+                          <div className="catalog-card-fallback">NO IMAGE</div>
+                        )}
+                      </div>
+
+                      <div className="catalog-card-compact-body">
+                        <strong className="catalog-card-compact-title">{card.cardNameKo}</strong>
+                        <span className="catalog-card-compact-subtitle">
+                          {card.cardNo} · {card.rarity}
+                        </span>
+                        <span className="catalog-card-compact-subtitle">
+                          {card.set.setNameKo}
+                        </span>
+                        {isSelected ? <span className="status-pill">추가 창 열림</span> : null}
+                      </div>
+                    </article>
+                  );
+                }
 
                 return (
                   <article
@@ -296,7 +379,7 @@ export function CatalogSearchPanel({
                         <span>로컬 코드 {card.localCode ?? "없음"}</span>
                       </div>
 
-                    <div className="catalog-card-action">
+                      <div className="catalog-card-action">
                         <strong>
                           {selectionEnabled
                             ? isSelected

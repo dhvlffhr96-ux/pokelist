@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { AppAuthProvider } from "@/components/app-auth-context";
 import { AppSummaryProvider } from "@/components/app-summary-context";
+import { ScrollToTopButton } from "@/components/scroll-to-top-button";
 import { SiteHeader } from "@/components/site-header";
 import "./globals.css";
 
@@ -21,6 +22,7 @@ export default function RootLayout({
           <AppSummaryProvider>
             <SiteHeader />
             {children}
+            <ScrollToTopButton />
           </AppSummaryProvider>
         </AppAuthProvider>
       </body>
