@@ -46,7 +46,7 @@ function getPreviewImageSrc(card: CardMaster) {
 }
 
 function getRarityLabel(rarity: CardRarityMeta) {
-  return rarity.displayNameKo ?? rarity.displayNameEn ?? rarity.rarityName;
+  return rarity.rarityCode ?? rarity.displayNameKo ?? rarity.displayNameEn ?? rarity.rarityName;
 }
 
 export function CatalogSearchPanel({
