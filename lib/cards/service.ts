@@ -1,4 +1,5 @@
 import { CatalogRepository } from "@/lib/cards/catalog-repository";
+import { StorageUserAccountRepository } from "@/lib/auth/storage-user-account-repository";
 import { StorageCollectionRepository } from "@/lib/cards/storage-collection-repository";
 import {
   catalogQuerySchema,
@@ -14,6 +15,16 @@ import type {
 
 const catalogRepository = new CatalogRepository();
 const storageCollectionRepository = new StorageCollectionRepository();
+const userAccountRepository = new StorageUserAccountRepository();
+
+export class UserCollectionLookupError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+  }
+}
 
 export async function searchCatalogCards(params: {
   query?: string;
@@ -64,10 +75,24 @@ export async function listCatalogRarities(setId?: number) {
 
 export async function listUserCollection(userId: string) {
   const normalizedUserId = userIdSchema.parse(userId);
-  const collection = await storageCollectionRepository.readUserCollection(normalizedUserId);
+  const existingCollection =
+    await storageCollectionRepository.findUserCollection(normalizedUserId);
+
+  if (existingCollection) {
+    return {
+      ...existingCollection,
+      storagePath: storageCollectionRepository.getStoragePath(normalizedUserId),
+    };
+  }
+
+  const account = await userAccountRepository.readUserAccount(normalizedUserId);
+
+  if (!account) {
+    throw new UserCollectionLookupError("존재하지 않는 사용자 ID입니다.", 404);
+  }
 
   return {
-    ...collection,
+    ...storageCollectionRepository.createEmptyUserCollection(normalizedUserId),
     storagePath: storageCollectionRepository.getStoragePath(normalizedUserId),
   };
 }

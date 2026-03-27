@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { getAppEnv } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
+import {
+  isMissingBucketError,
+  isMissingObjectError,
+} from "@/lib/supabase/storage-errors";
 import type {
   CardMaster,
   CreateOwnedCardInput,
@@ -78,38 +82,6 @@ function createEmptyCollection(userId: string): UserCollectionFile {
   };
 }
 
-function isMissingObjectError(error: unknown) {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  const statusCode =
-    "statusCode" in error && error.statusCode !== null ? String(error.statusCode) : "";
-  const message =
-    "message" in error && typeof error.message === "string"
-      ? error.message.toLowerCase()
-      : "";
-
-  return (
-    statusCode === "404" ||
-    message.includes("not found") ||
-    message.includes("no such object")
-  );
-}
-
-function isMissingBucketError(error: unknown) {
-  if (!error || typeof error !== "object") {
-    return false;
-  }
-
-  const message =
-    "message" in error && typeof error.message === "string"
-      ? error.message.toLowerCase()
-      : "";
-
-  return message.includes("bucket") && message.includes("not found");
-}
-
 export class StorageCollectionRepository {
   private getBucketName() {
     return getAppEnv().userCollectionBucket;
@@ -123,7 +95,11 @@ export class StorageCollectionRepository {
     return `supabase://${this.getBucketName()}/${this.getObjectPath(userId)}`;
   }
 
-  async readUserCollection(userId: string) {
+  createEmptyUserCollection(userId: string) {
+    return createEmptyCollection(userId);
+  }
+
+  async findUserCollection(userId: string) {
     const supabase = createSupabaseAdminClient();
     const { data, error } = await supabase
       .storage
@@ -138,7 +114,7 @@ export class StorageCollectionRepository {
       }
 
       if (isMissingObjectError(error)) {
-        return createEmptyCollection(userId);
+        return null;
       }
 
       throw new Error("사용자 카드 목록을 스토리지에서 읽지 못했습니다.");
@@ -163,6 +139,12 @@ export class StorageCollectionRepository {
     } catch {
       throw new Error("사용자 카드 목록 문서 형식이 올바르지 않습니다.");
     }
+  }
+
+  async readUserCollection(userId: string) {
+    const collection = await this.findUserCollection(userId);
+
+    return collection ?? createEmptyCollection(userId);
   }
 
   async writeUserCollection(collection: UserCollectionFile) {

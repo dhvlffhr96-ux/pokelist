@@ -32,6 +32,8 @@ type CatalogSearchPanelProps = {
   totalPages: number;
   totalCount: number;
   searchDisabled: boolean;
+  selectionEnabled: boolean;
+  selectionDisabledReason?: string | null;
   onQueryChange: (query: string) => void;
   onSearch: () => void;
   onPageChange: (page: number) => void;
@@ -72,6 +74,8 @@ export function CatalogSearchPanel({
   totalPages,
   totalCount,
   searchDisabled,
+  selectionEnabled,
+  selectionDisabledReason,
   onQueryChange,
   onSearch,
   onPageChange,
@@ -235,12 +239,20 @@ export function CatalogSearchPanel({
 
                 return (
                   <article
-                    className={`catalog-card ${isSelected ? "catalog-card-selected" : ""}`}
+                    className={`catalog-card ${selectionEnabled ? "catalog-card-interactive" : "catalog-card-readonly"} ${isSelected ? "catalog-card-selected" : ""}`}
                     key={card.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onSelect(card)}
+                    role={selectionEnabled ? "button" : undefined}
+                    tabIndex={selectionEnabled ? 0 : undefined}
+                    onClick={() => {
+                      if (selectionEnabled) {
+                        onSelect(card);
+                      }
+                    }}
                     onKeyDown={(event) => {
+                      if (!selectionEnabled) {
+                        return;
+                      }
+
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         onSelect(card);
@@ -284,9 +296,19 @@ export function CatalogSearchPanel({
                         <span>로컬 코드 {card.localCode ?? "없음"}</span>
                       </div>
 
-                      <div className="catalog-card-action">
-                        <strong>{isSelected ? "모달이 열려 있습니다" : "카드를 눌러 추가"}</strong>
-                        <span>수량, 상태, 메모를 바로 입력할 수 있습니다.</span>
+                    <div className="catalog-card-action">
+                        <strong>
+                          {selectionEnabled
+                            ? isSelected
+                              ? "모달이 열려 있습니다"
+                              : "카드를 눌러 추가"
+                            : "현재는 읽기 전용"}
+                        </strong>
+                        <span>
+                          {selectionEnabled
+                            ? "수량, 상태, 메모를 바로 입력할 수 있습니다."
+                            : selectionDisabledReason ?? "로그인한 본인 목록에서만 추가할 수 있습니다."}
+                        </span>
                       </div>
                     </div>
                   </article>

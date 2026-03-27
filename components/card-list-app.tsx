@@ -1,9 +1,13 @@
 "use client";
 
-import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useRef, useState, type ReactNode } from "react";
 import { CatalogSearchPanel } from "@/components/catalog-search-panel";
 import { OwnedCardForm } from "@/components/owned-card-form";
 import { OwnedCardGrid } from "@/components/owned-card-grid";
+import { useAppAuth } from "@/components/app-auth-context";
+import {
+  useAppSummary,
+} from "@/components/app-summary-context";
 import {
   emptyCollectionFormValues,
   toCollectionFormValues,
@@ -22,7 +26,8 @@ import {
 } from "@/lib/cards/types";
 
 type CardListAppProps = {
-  mode: "catalog" | "collection";
+  mode: "catalog" | "collection" | "viewer";
+  hero?: ReactNode;
 };
 
 type ApiResponse<T> = {
@@ -36,6 +41,8 @@ type UserCollectionResponse = {
   items: OwnedCardItem[];
   storagePath: string;
 };
+
+type CollectionViewMode = "detail" | "compact";
 
 const CATALOG_PAGE_SIZE = 12;
 const LAST_ACTIVE_USER_ID_STORAGE_KEY = "pokelist:last-active-user-id";
@@ -104,9 +111,13 @@ function readStoredActiveUserId() {
 
 export function CardListApp({
   mode,
+  hero,
 }: CardListAppProps) {
   const catalogPanelRef = useRef<HTMLElement | null>(null);
+  const pendingCatalogScrollRef = useRef(false);
   const hasRestoredUserRef = useRef(false);
+  const { sessionUserId } = useAppAuth();
+  const { setSummary } = useAppSummary();
   const [userIdInput, setUserIdInput] = useState("");
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
   const [storagePath, setStoragePath] = useState<string | null>(null);
@@ -125,6 +136,7 @@ export function CardListApp({
   const [rarityOptions, setRarityOptions] = useState<CardRarityMeta[]>([]);
   const [selectedRarity, setSelectedRarity] = useState("");
   const [collectionQuery, setCollectionQuery] = useState("");
+  const [collectionViewMode, setCollectionViewMode] = useState<CollectionViewMode>("detail");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [seriesError, setSeriesError] = useState<string | null>(null);
@@ -142,10 +154,30 @@ export function CardListApp({
   const deferredQuery = useDeferredValue(collectionQuery);
   const isCatalogMode = mode === "catalog";
   const isCollectionMode = mode === "collection";
+  const isViewerMode = mode === "viewer";
+  const canManageActiveCollection = !isViewerMode && Boolean(
+    sessionUserId && activeUserId && sessionUserId === activeUserId,
+  );
 
   const visibleCards = cards.filter((card) => matchesCollectionQuery(card, deferredQuery));
   const totalQuantity = cards.reduce((sum, card) => sum + card.quantity, 0);
   const uniqueSets = new Set(cards.map((card) => card.card.setNameKo)).size;
+
+  function getWriteBlockedMessage() {
+    if (!activeUserId) {
+      return "먼저 카드 열람 탭에서 사용자 목록을 불러와 주세요.";
+    }
+
+    if (!sessionUserId) {
+      return "로그인 후 본인 목록만 수정할 수 있습니다.";
+    }
+
+    if (sessionUserId !== activeUserId) {
+      return "로그인한 사용자 본인 목록만 수정할 수 있습니다.";
+    }
+
+    return null;
+  }
 
   const loadRarityOptions = useCallback(async (setId?: number) => {
     setIsLoadingRarities(true);
@@ -245,6 +277,27 @@ export function CardListApp({
       window.removeEventListener("keydown", handleKeydown);
     };
   }, [selectedMaster, editingCard]);
+
+  useEffect(() => {
+    setSummary({
+      activeUserId,
+      totalQuantity,
+      totalCards: cards.length,
+      uniqueSets,
+    });
+  }, [activeUserId, cards.length, setSummary, totalQuantity, uniqueSets]);
+
+  useEffect(() => {
+    if (!isCatalogMode || !pendingCatalogScrollRef.current || isSearchingCatalog) {
+      return;
+    }
+
+    pendingCatalogScrollRef.current = false;
+
+    window.requestAnimationFrame(() => {
+      scrollToCatalogTop();
+    });
+  }, [catalogPage, catalogResults.length, isCatalogMode, isSearchingCatalog]);
 
   function resetCatalogResults() {
     setCatalogResults([]);
@@ -358,9 +411,18 @@ export function CardListApp({
             : `사용자 "${result.data.userId}" 목록을 불러왔습니다.`,
         );
       } catch (error) {
+        setActiveUserId(null);
+        setStoragePath(null);
+        setCards([]);
+        setEditingCard(null);
+        setSelectedMaster(null);
         setLoadError(
           error instanceof Error ? error.message : "사용자 카드 목록을 불러오지 못했습니다.",
         );
+
+        if (options?.restored) {
+          window.localStorage.removeItem(LAST_ACTIVE_USER_ID_STORAGE_KEY);
+        }
       } finally {
         setIsLoadingUser(false);
       }
@@ -386,6 +448,12 @@ export function CardListApp({
       restored: true,
     });
   }, [loadUserCollection]);
+
+  useEffect(() => {
+    if (sessionUserId && !userIdInput) {
+      setUserIdInput(sessionUserId);
+    }
+  }, [sessionUserId, userIdInput]);
 
   async function searchCatalog(
     page = 1,
@@ -501,6 +569,7 @@ export function CardListApp({
     }
 
     if (page !== catalogPage) {
+      pendingCatalogScrollRef.current = true;
       scrollToCatalogTop();
     }
 
@@ -530,7 +599,16 @@ export function CardListApp({
   }
 
   async function handleSubmit(values: CollectionFormValues) {
-    if (!activeUserId) {
+    const writeBlockedMessage = getWriteBlockedMessage();
+
+    if (writeBlockedMessage) {
+      setSubmitError(writeBlockedMessage);
+      return false;
+    }
+
+    const targetUserId = activeUserId;
+
+    if (!targetUserId) {
       setSubmitError("먼저 사용자 ID를 입력하고 목록을 불러와 주세요.");
       return false;
     }
@@ -542,7 +620,7 @@ export function CardListApp({
     try {
       if (editingCard) {
         const updated = await submitToApi(
-          `/api/users/${encodeURIComponent(activeUserId)}/collection/${editingCard.id}`,
+          `/api/users/${encodeURIComponent(targetUserId)}/collection/${editingCard.id}`,
           "PATCH",
           values,
         );
@@ -559,7 +637,7 @@ export function CardListApp({
       }
 
       const created = await submitToApi(
-        `/api/users/${encodeURIComponent(activeUserId)}/collection`,
+        `/api/users/${encodeURIComponent(targetUserId)}/collection`,
         "POST",
         {
           ...values,
@@ -580,7 +658,16 @@ export function CardListApp({
   }
 
   async function handleDelete(card: OwnedCardItem) {
-    if (!activeUserId) {
+    const writeBlockedMessage = getWriteBlockedMessage();
+
+    if (writeBlockedMessage) {
+      setSubmitError(writeBlockedMessage);
+      return;
+    }
+
+    const targetUserId = activeUserId;
+
+    if (!targetUserId) {
       setSubmitError("먼저 사용자 ID를 입력하고 목록을 불러와 주세요.");
       return;
     }
@@ -597,7 +684,7 @@ export function CardListApp({
 
     try {
       const response = await fetch(
-        `/api/users/${encodeURIComponent(activeUserId)}/collection/${card.id}`,
+        `/api/users/${encodeURIComponent(targetUserId)}/collection/${card.id}`,
         {
           method: "DELETE",
         },
@@ -621,71 +708,66 @@ export function CardListApp({
 
   return (
     <section className="app-shell">
-      <div className="summary-grid">
-        <article className="summary-card">
-          <span>현재 사용자</span>
-          <strong>{activeUserId ?? "미선택"}</strong>
-        </article>
-        <article className="summary-card">
-          <span>총 보유 수량</span>
-          <strong>{totalQuantity}</strong>
-        </article>
-        <article className="summary-card">
-          <span>보유 카드 종류 / 세트</span>
-          <strong>
-            {cards.length} / {uniqueSets}
-          </strong>
-          <p className="summary-detail">{cards.length}종 카드</p>
-        </article>
-      </div>
+      {isViewerMode ? (
+        <div className="intro-grid">
+          {hero ? hero : null}
 
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <h2>사용자 목록 불러오기</h2>
-            <p>
-              사용자 ID를 입력하면 저장된 내 카드 목록을 불러옵니다. 아직 기록이 없으면
-              빈 상태에서 시작하고, 첫 저장 시 목록이 만들어집니다.
-            </p>
-          </div>
-          <span className="storage-pill">{activeUserId ?? "사용자 미선택"}</span>
+          <section className="panel">
+            <div className="panel-header">
+              <div>
+                <h2>사용자 목록 불러오기</h2>
+                <p>
+                  아이디를 입력하면 해당 사용자 카드 목록을 열람할 수 있습니다. 이
+                  페이지는 읽기 전용으로 사용합니다.
+                </p>
+              </div>
+            </div>
+
+            {loadError ? <div className="alert alert-error">{loadError}</div> : null}
+
+            <div className="identity-grid">
+              <div className="field">
+                <label htmlFor="userId">사용자 ID</label>
+                <input
+                  id="userId"
+                  value={userIdInput}
+                  onChange={(event) => setUserIdInput(event.target.value)}
+                  placeholder="예: soulx02"
+                  disabled={isLoadingUser}
+                />
+              </div>
+              <div className="form-actions align-end">
+                <button
+                  className="btn btn-primary"
+                  type="button"
+                  onClick={() => {
+                    void loadUserCollection(userIdInput);
+                  }}
+                  disabled={isLoadingUser}
+                >
+                  {isLoadingUser ? "불러오는 중..." : "목록 불러오기"}
+                </button>
+              </div>
+            </div>
+
+            {storagePath ? (
+              <div className="results-meta">
+                <span>{activeUserId} 사용자 목록을 불러왔습니다.</span>
+                <span>현재는 열람만 가능합니다.</span>
+              </div>
+            ) : null}
+          </section>
         </div>
-
-        {loadError ? <div className="alert alert-error">{loadError}</div> : null}
-
-        <div className="identity-grid">
-          <div className="field">
-            <label htmlFor="userId">사용자 ID</label>
-            <input
-              id="userId"
-              value={userIdInput}
-              onChange={(event) => setUserIdInput(event.target.value)}
-              placeholder="예: soulx02"
-              disabled={isLoadingUser}
-            />
-          </div>
-          <div className="form-actions align-end">
-            <button
-              className="btn btn-primary"
-              type="button"
-              onClick={() => loadUserCollection(userIdInput)}
-              disabled={isLoadingUser}
-            >
-              {isLoadingUser ? "불러오는 중..." : "목록 불러오기"}
-            </button>
-          </div>
-        </div>
-
-        {storagePath ? (
-          <div className="results-meta">
-            <span>{activeUserId} 사용자 목록을 불러왔습니다.</span>
-          </div>
-        ) : null}
-      </section>
+      ) : hero ? (
+        hero
+      ) : null}
 
       {isCatalogMode ? (
         <>
           <section className="panel" ref={catalogPanelRef}>
+            {submitError && !selectedMaster ? (
+              <div className="alert alert-error">{submitError}</div>
+            ) : null}
             {successMessage ? <div className="alert alert-success">{successMessage}</div> : null}
 
             <CatalogSearchPanel
@@ -711,6 +793,8 @@ export function CardListApp({
               totalPages={catalogTotalPages}
               totalCount={catalogTotalCount}
               searchDisabled={Boolean(selectedSeriesName) && !selectedSet}
+              selectionEnabled={canManageActiveCollection}
+              selectionDisabledReason={getWriteBlockedMessage()}
               onQueryChange={setCatalogQuery}
               onSearch={() => handleCatalogSearch(1)}
               onPageChange={handleCatalogSearch}
@@ -720,6 +804,13 @@ export function CardListApp({
               onSetChange={handleSetChange}
               onRarityChange={handleRarityChange}
               onSelect={(card) => {
+                const writeBlockedMessage = getWriteBlockedMessage();
+
+                if (writeBlockedMessage) {
+                  setSubmitError(writeBlockedMessage);
+                  return;
+                }
+
                 setSelectedMaster(card);
                 setEditingCard(null);
                 setSubmitError(null);
@@ -814,34 +905,80 @@ export function CardListApp({
         </>
       ) : null}
 
-      {isCollectionMode ? (
+      {isCollectionMode || (isViewerMode && activeUserId) ? (
         <>
           <section className="panel list-panel">
             <div className="panel-header">
               <div>
-                <h3>내 카드 목록</h3>
-                <p>검색은 카드명, 세트명, 카드 번호, 로컬 코드, 메모 기준으로 동작합니다.</p>
+                <h3>{isViewerMode ? "사용자 카드 열람" : "내 카드 목록"}</h3>
+                <p>
+                  {isViewerMode
+                    ? "불러온 사용자 카드 목록을 보고, 사진을 눌러 크게 확인할 수 있습니다."
+                    : "검색은 카드명, 세트명, 카드 번호, 로컬 코드, 메모 기준으로 동작합니다."}
+                </p>
               </div>
-              <div className="toolbar">
+              <div className="collection-toolbar">
                 <input
                   value={collectionQuery}
                   onChange={(event) => setCollectionQuery(event.target.value)}
                   placeholder="내 카드 검색"
                 />
+                <div className="view-switch" role="tablist" aria-label="내 카드 보기 방식">
+                  <button
+                    className={`view-switch-button ${collectionViewMode === "detail" ? "view-switch-button-active" : ""}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={collectionViewMode === "detail"}
+                    onClick={() => setCollectionViewMode("detail")}
+                  >
+                    상세 보기
+                  </button>
+                  <button
+                    className={`view-switch-button ${collectionViewMode === "compact" ? "view-switch-button-active" : ""}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={collectionViewMode === "compact"}
+                    onClick={() => setCollectionViewMode("compact")}
+                  >
+                    간단 보기
+                  </button>
+                </div>
               </div>
             </div>
 
+            {submitError && !editingCard ? (
+              <div className="alert alert-error">{submitError}</div>
+            ) : null}
             {successMessage ? <div className="alert alert-success">{successMessage}</div> : null}
 
             <div className="results-meta">
               <span>{visibleCards.length}개 표시</span>
-              <span>카드를 누르면 수정 창이 열립니다.</span>
+              <span>
+                {isViewerMode
+                  ? "이 페이지에서는 열람만 가능합니다."
+                  : canManageActiveCollection
+                  ? "카드를 누르면 수정 창이 열립니다."
+                  : "현재는 열람만 가능합니다."}
+              </span>
               <span>사진을 누르면 크게 볼 수 있습니다.</span>
             </div>
 
             <OwnedCardGrid
               cards={visibleCards}
               activeUserId={activeUserId}
+              editable={isViewerMode ? false : canManageActiveCollection}
+              readOnlyReason={
+                isViewerMode
+                  ? "카드 열람 페이지에서는 수정할 수 없습니다."
+                  : getWriteBlockedMessage()
+              }
+              emptyHint={
+                isViewerMode
+                  ? null
+                  : "카드 검색 페이지에서 카드를 선택해서 내 목록에 추가해 보세요."
+              }
+              missingUserMessage="카드 열람 탭에서 사용자 ID를 불러오면 카드 목록을 표시할 수 있습니다."
+              viewMode={collectionViewMode}
               selectedCardId={editingCard?.id ?? null}
               pendingId={pendingDeleteId}
               onEdit={(card) => {
@@ -854,7 +991,7 @@ export function CardListApp({
             />
           </section>
 
-          {editingCard ? (
+          {isCollectionMode && editingCard ? (
             <div
               className="form-dialog-backdrop"
               role="dialog"

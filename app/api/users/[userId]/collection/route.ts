@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { addOwnedCard, listUserCollection } from "@/lib/cards/service";
+import { AuthAccessError, requireAuthorizedUser } from "@/lib/auth/service";
+import {
+  addOwnedCard,
+  listUserCollection,
+  UserCollectionLookupError,
+} from "@/lib/cards/service";
 import { parseCollectionFormInput } from "@/lib/cards/schema";
 
 type RouteContext = {
@@ -19,6 +24,15 @@ export async function GET(_request: Request, context: RouteContext) {
 
     return NextResponse.json({ data: collection });
   } catch (error) {
+    if (error instanceof UserCollectionLookupError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+        },
+        { status: error.status },
+      );
+    }
+
     return NextResponse.json(
       {
         error:
@@ -34,6 +48,7 @@ export async function GET(_request: Request, context: RouteContext) {
 export async function POST(request: Request, context: RouteContext) {
   try {
     const userId = await getUserId(context);
+    requireAuthorizedUser(request, userId);
     const payload = await request.json();
     const parsed = parseCollectionFormInput(payload);
 
@@ -63,6 +78,15 @@ export async function POST(request: Request, context: RouteContext) {
 
     return NextResponse.json({ data: item }, { status: 201 });
   } catch (error) {
+    if (error instanceof AuthAccessError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+        },
+        { status: error.status },
+      );
+    }
+
     return NextResponse.json(
       {
         error:

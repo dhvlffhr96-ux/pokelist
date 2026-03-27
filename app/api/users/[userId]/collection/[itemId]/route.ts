@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { AuthAccessError, requireAuthorizedUser } from "@/lib/auth/service";
 import { deleteOwnedCard, updateOwnedCard } from "@/lib/cards/service";
 import { parseCollectionFormInput } from "@/lib/cards/schema";
 
@@ -15,6 +16,7 @@ async function getRouteParams(context: RouteContext) {
 export async function PATCH(request: Request, context: RouteContext) {
   try {
     const { userId, itemId } = await getRouteParams(context);
+    requireAuthorizedUser(request, userId);
     const payload = await request.json();
     const parsed = parseCollectionFormInput(payload);
 
@@ -32,6 +34,15 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     return NextResponse.json({ data: item });
   } catch (error) {
+    if (error instanceof AuthAccessError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+        },
+        { status: error.status },
+      );
+    }
+
     return NextResponse.json(
       {
         error:
@@ -47,10 +58,20 @@ export async function PATCH(request: Request, context: RouteContext) {
 export async function DELETE(_request: Request, context: RouteContext) {
   try {
     const { userId, itemId } = await getRouteParams(context);
+    requireAuthorizedUser(_request, userId);
     await deleteOwnedCard(userId, itemId);
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof AuthAccessError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+        },
+        { status: error.status },
+      );
+    }
+
     return NextResponse.json(
       {
         error:

@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { AppAuthProvider } from "@/components/app-auth-context";
+import { AppSummaryProvider } from "@/components/app-summary-context";
 import { SiteHeader } from "@/components/site-header";
 import "./globals.css";
 
@@ -15,8 +17,12 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body>
-        <SiteHeader />
-        {children}
+        <AppAuthProvider>
+          <AppSummaryProvider>
+            <SiteHeader />
+            {children}
+          </AppSummaryProvider>
+        </AppAuthProvider>
       </body>
     </html>
   );
