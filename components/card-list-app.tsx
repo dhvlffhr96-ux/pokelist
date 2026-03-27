@@ -20,6 +20,7 @@ import {
 } from "@/lib/cards/types";
 
 type CardListAppProps = {
+  mode: "catalog" | "collection";
   catalogSourceLabel: string;
   personalStorageLabel: string;
 };
@@ -67,6 +68,7 @@ function upsertOwnedItem(cards: OwnedCardItem[], nextItem: OwnedCardItem) {
 }
 
 export function CardListApp({
+  mode,
   catalogSourceLabel,
   personalStorageLabel,
 }: CardListAppProps) {
@@ -103,12 +105,18 @@ export function CardListApp({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(collectionQuery);
+  const isCatalogMode = mode === "catalog";
+  const isCollectionMode = mode === "collection";
 
   const visibleCards = cards.filter((card) => matchesCollectionQuery(card, deferredQuery));
   const totalQuantity = cards.reduce((sum, card) => sum + card.quantity, 0);
   const uniqueSets = new Set(cards.map((card) => card.card.setNameKo)).size;
 
   useEffect(() => {
+    if (!isCatalogMode) {
+      return;
+    }
+
     async function loadInitialFilters() {
       setIsLoadingSeries(true);
       setIsLoadingRarities(true);
@@ -173,7 +181,7 @@ export function CardListApp({
     }
 
     void loadInitialFilters();
-  }, []);
+  }, [isCatalogMode]);
 
   function resetCatalogResults() {
     setCatalogResults([]);
@@ -542,136 +550,168 @@ export function CardListApp({
         </div>
       </section>
 
-      <div className="workspace-grid catalog-layout">
-        <section className="panel">
-          <CatalogSearchPanel
-            query={catalogQuery}
-            pending={isSearchingCatalog}
-            results={catalogResults}
-            selectedCardId={selectedMaster?.id ?? null}
-            seriesOptions={seriesOptions}
-            selectedSeriesName={selectedSeriesName}
-            seriesPending={isLoadingSeries}
-            setOptions={setOptions}
-            selectedSetId={selectedSet?.id ?? null}
-            setPending={isLoadingSets}
-            rarityOptions={rarityOptions}
-            selectedRarity={selectedRarity}
-            rarityPending={isLoadingRarities}
-            error={catalogError}
-            seriesError={seriesError}
-            setError={setError}
-            rarityError={rarityError}
-            page={catalogPage}
-            pageSize={CATALOG_PAGE_SIZE}
-            totalPages={catalogTotalPages}
-            totalCount={catalogTotalCount}
-            searchDisabled={Boolean(selectedSeriesName) && !selectedSet}
-            onQueryChange={setCatalogQuery}
-            onSearch={() => handleCatalogSearch(1)}
-            onPageChange={handleCatalogSearch}
-            onSeriesChange={(seriesName) => {
-              void handleSeriesChange(seriesName);
-            }}
-            onSetChange={handleSetChange}
-            onRarityChange={handleRarityChange}
-            onSelect={(card) => {
-              setSelectedMaster(card);
-              setEditingCard(null);
-              setSubmitError(null);
-              setSuccessMessage(null);
-            }}
-          />
-        </section>
-
-        <section className="panel sticky-panel">
-          <div className="panel-header">
-            <div>
-              <h2>{editingCard ? "내 카드 수정" : "내 카드 저장"}</h2>
-              <p>
-                마스터 카드 정보는 읽기 전용입니다. 여기서는 수량, 상태, 메모,
-                구매일만 사용자 스토리지 문서에 저장합니다.
-              </p>
-            </div>
-            <span className="storage-pill">{activeUserId ?? "사용자 미선택"}</span>
-          </div>
-
-          {editingCard || selectedMaster ? (
-            <OwnedCardForm
-              key={`form-${editingCard?.id ?? selectedMaster?.id ?? "empty"}`}
-              mode={editingCard ? "edit" : "create"}
-              title={
-                editingCard
-                  ? editingCard.card.cardNameKo
-                  : selectedMaster?.cardNameKo ?? "카드 선택 필요"
-              }
-              subtitle={
-                editingCard
-                  ? `${editingCard.card.setNameKo} · ${editingCard.card.cardNo}`
-                  : selectedMaster
-                    ? `${selectedMaster.set.setNameKo} · ${selectedMaster.cardNo}`
-                    : "왼쪽 검색 결과에서 카드를 선택하세요."
-              }
-              initialValues={
-                editingCard ? toCollectionFormValues(editingCard) : emptyCollectionFormValues
-              }
-              activeUserId={activeUserId}
-              pending={isSubmitting}
-              serverError={submitError}
-              onCancel={() => {
-                setEditingCard(null);
-                setSelectedMaster(null);
-                setSubmitError(null);
+      {isCatalogMode ? (
+        <div className="workspace-grid catalog-layout">
+          <section className="panel">
+            <CatalogSearchPanel
+              query={catalogQuery}
+              pending={isSearchingCatalog}
+              results={catalogResults}
+              selectedCardId={selectedMaster?.id ?? null}
+              seriesOptions={seriesOptions}
+              selectedSeriesName={selectedSeriesName}
+              seriesPending={isLoadingSeries}
+              setOptions={setOptions}
+              selectedSetId={selectedSet?.id ?? null}
+              setPending={isLoadingSets}
+              rarityOptions={rarityOptions}
+              selectedRarity={selectedRarity}
+              rarityPending={isLoadingRarities}
+              error={catalogError}
+              seriesError={seriesError}
+              setError={setError}
+              rarityError={rarityError}
+              page={catalogPage}
+              pageSize={CATALOG_PAGE_SIZE}
+              totalPages={catalogTotalPages}
+              totalCount={catalogTotalCount}
+              searchDisabled={Boolean(selectedSeriesName) && !selectedSet}
+              onQueryChange={setCatalogQuery}
+              onSearch={() => handleCatalogSearch(1)}
+              onPageChange={handleCatalogSearch}
+              onSeriesChange={(seriesName) => {
+                void handleSeriesChange(seriesName);
               }}
-              onSubmit={handleSubmit}
+              onSetChange={handleSetChange}
+              onRarityChange={handleRarityChange}
+              onSelect={(card) => {
+                setSelectedMaster(card);
+                setEditingCard(null);
+                setSubmitError(null);
+                setSuccessMessage(null);
+              }}
             />
-          ) : (
-            <div className="empty-state">
-              먼저 왼쪽의 마스터 카드 검색 결과에서 카드를 선택하세요.
-              <br />
-              사용자 ID를 아직 불러오지 않았다면 상단에서 먼저 불러와야 저장됩니다.
+          </section>
+
+          <section className="panel sticky-panel">
+            <div className="panel-header">
+              <div>
+                <h2>내 카드 저장</h2>
+                <p>
+                  마스터 카드 정보는 읽기 전용입니다. 여기서는 수량, 상태, 메모,
+                  구매일만 사용자 스토리지 문서에 저장합니다.
+                </p>
+              </div>
+              <span className="storage-pill">{activeUserId ?? "사용자 미선택"}</span>
             </div>
-          )}
-        </section>
-      </div>
 
-      <section className="panel list-panel">
-        <div className="panel-header">
-          <div>
-            <h3>내 카드 목록</h3>
-            <p>검색은 카드명, 세트명, 카드 번호, 로컬 코드, 메모 기준으로 동작합니다.</p>
-          </div>
-          <div className="toolbar">
-            <input
-              value={collectionQuery}
-              onChange={(event) => setCollectionQuery(event.target.value)}
-              placeholder="내 카드 검색"
-            />
-          </div>
+            {successMessage ? <div className="alert alert-success">{successMessage}</div> : null}
+
+            {selectedMaster ? (
+              <OwnedCardForm
+                key={`form-${selectedMaster.id}`}
+                mode="create"
+                title={selectedMaster.cardNameKo}
+                subtitle={`${selectedMaster.set.setNameKo} · ${selectedMaster.cardNo}`}
+                initialValues={emptyCollectionFormValues}
+                activeUserId={activeUserId}
+                pending={isSubmitting}
+                serverError={submitError}
+                onCancel={() => {
+                  setSelectedMaster(null);
+                  setSubmitError(null);
+                }}
+                onSubmit={handleSubmit}
+              />
+            ) : (
+              <div className="empty-state">
+                카드 검색 결과에서 저장할 카드를 선택하세요.
+                <br />
+                사용자 ID를 아직 불러오지 않았다면 상단에서 먼저 불러와야 저장됩니다.
+              </div>
+            )}
+          </section>
         </div>
+      ) : null}
 
-        {successMessage ? <div className="alert alert-success">{successMessage}</div> : null}
+      {isCollectionMode ? (
+        <div className="workspace-grid collection-layout">
+          <section className="panel list-panel">
+            <div className="panel-header">
+              <div>
+                <h3>내 카드 목록</h3>
+                <p>검색은 카드명, 세트명, 카드 번호, 로컬 코드, 메모 기준으로 동작합니다.</p>
+              </div>
+              <div className="toolbar">
+                <input
+                  value={collectionQuery}
+                  onChange={(event) => setCollectionQuery(event.target.value)}
+                  placeholder="내 카드 검색"
+                />
+              </div>
+            </div>
 
-        <div className="results-meta">
-          <span>{visibleCards.length}개 표시</span>
-          <span>목록 영역만 스크롤됩니다.</span>
+            {successMessage ? <div className="alert alert-success">{successMessage}</div> : null}
+
+            <div className="results-meta">
+              <span>{visibleCards.length}개 표시</span>
+              <span>목록 영역만 스크롤됩니다.</span>
+              <span>사진을 누르면 크게 볼 수 있습니다.</span>
+            </div>
+
+            <div className="scroll-area list-scroll-area">
+              <OwnedCardGrid
+                cards={visibleCards}
+                activeUserId={activeUserId}
+                pendingId={pendingDeleteId}
+                onEdit={(card) => {
+                  setEditingCard(card);
+                  setSelectedMaster(null);
+                  setSubmitError(null);
+                  setSuccessMessage(null);
+                }}
+                onDelete={handleDelete}
+              />
+            </div>
+          </section>
+
+          <section className="panel sticky-panel">
+            <div className="panel-header">
+              <div>
+                <h2>내 카드 수정</h2>
+                <p>
+                  저장된 카드를 선택하면 수량, 상태, 메모, 구매일을 수정할 수 있습니다.
+                </p>
+              </div>
+              <span className="storage-pill">{activeUserId ?? "사용자 미선택"}</span>
+            </div>
+
+            {editingCard ? (
+              <OwnedCardForm
+                key={`form-${editingCard.id}`}
+                mode="edit"
+                title={editingCard.card.cardNameKo}
+                subtitle={`${editingCard.card.setNameKo} · ${editingCard.card.cardNo}`}
+                initialValues={toCollectionFormValues(editingCard)}
+                activeUserId={activeUserId}
+                pending={isSubmitting}
+                serverError={submitError}
+                onCancel={() => {
+                  setEditingCard(null);
+                  setSubmitError(null);
+                }}
+                onSubmit={handleSubmit}
+              />
+            ) : (
+              <div className="empty-state">
+                왼쪽 목록에서 편집할 카드를 선택하세요.
+                <br />
+                새 카드는 카드 검색 페이지에서 추가할 수 있습니다.
+              </div>
+            )}
+          </section>
         </div>
-
-        <div className="scroll-area list-scroll-area">
-          <OwnedCardGrid
-            cards={visibleCards}
-            activeUserId={activeUserId}
-            pendingId={pendingDeleteId}
-            onEdit={(card) => {
-              setEditingCard(card);
-              setSelectedMaster(null);
-              setSubmitError(null);
-              setSuccessMessage(null);
-            }}
-            onDelete={handleDelete}
-          />
-        </div>
-      </section>
+      ) : null}
     </section>
   );
 }
