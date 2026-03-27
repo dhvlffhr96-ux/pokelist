@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   CARD_TYPE_LABELS,
   type CardMaster,
+  type CardRarityMeta,
   type CardSeriesSummary,
   type CardSetSummary,
 } from "@/lib/cards/types";
@@ -17,7 +18,7 @@ type CatalogSearchPanelProps = {
   results: CardMaster[];
   seriesOptions: CardSeriesSummary[];
   setOptions: CardSetSummary[];
-  rarityOptions: string[];
+  rarityOptions: CardRarityMeta[];
   selectedCardId: number | null;
   selectedSeriesName: string;
   selectedSetId: number | null;
@@ -42,6 +43,10 @@ type CatalogSearchPanelProps = {
 
 function getPreviewImageSrc(card: CardMaster) {
   return card.thumbnailUrl ?? card.imageUrl;
+}
+
+function getRarityLabel(rarity: CardRarityMeta) {
+  return rarity.displayNameKo ?? rarity.displayNameEn ?? rarity.rarityName;
 }
 
 export function CatalogSearchPanel({
@@ -185,8 +190,8 @@ export function CatalogSearchPanel({
                   {rarityPending ? "레어도 불러오는 중..." : "전체 레어도"}
                 </option>
                 {rarityOptions.map((rarity) => (
-                  <option key={rarity} value={rarity}>
-                    {rarity}
+                  <option key={rarity.rarityName} value={rarity.rarityName}>
+                    {getRarityLabel(rarity)}
                   </option>
                 ))}
               </select>

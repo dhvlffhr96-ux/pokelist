@@ -2,11 +2,13 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
 import type { Database } from "@/lib/supabase/database.types";
 import type {
   CardMaster,
+  CardRarityMeta,
   CardSeriesSummary,
   CardSetSummary,
   PaginatedResult,
 } from "@/lib/cards/types";
 
+type CardRarityMetaRow = Database["public"]["Tables"]["card_rarity_meta"]["Row"];
 type CardRow = Database["public"]["Tables"]["cards"]["Row"];
 type CardSetRow = Database["public"]["Tables"]["card_sets"]["Row"];
 type CatalogSearchRow = CardRow & {
@@ -208,6 +210,17 @@ function mapSetRow(row: CardSetRow): CardSetSummary {
   };
 }
 
+function mapRarityMetaRow(row: CardRarityMetaRow): CardRarityMeta {
+  return {
+    rarityName: row.rarity_name,
+    rarityCode: row.rarity_code,
+    displayNameKo: row.display_name_ko,
+    displayNameEn: row.display_name_en,
+    sortOrder: row.sort_order,
+    badgeTone: row.badge_tone,
+  };
+}
+
 export class CatalogRepository {
   async listCardSeries(limit: number) {
     const supabase = createSupabaseAdminClient();
@@ -306,37 +319,20 @@ export class CatalogRepository {
 
   async listCardRarities() {
     const supabase = createSupabaseAdminClient();
-    const raritySet = new Set<string>();
-    const pageSize = 1000;
+    const { data, error } = await supabase
+      .from("card_rarity_meta")
+      .select(
+        "rarity_name, rarity_code, display_name_ko, display_name_en, sort_order, badge_tone",
+      )
+      .order("sort_order", { ascending: true, nullsFirst: false })
+      .order("display_name_ko", { ascending: true, nullsFirst: false })
+      .order("rarity_name", { ascending: true });
 
-    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
-      const from = pageIndex * pageSize;
-      const to = from + pageSize - 1;
-      const { data, error } = await supabase
-        .from("cards")
-        .select("rarity")
-        .eq("game", "pokemon")
-        .eq("language", "ko")
-        .eq("is_active", true)
-        .order("id", { ascending: true })
-        .range(from, to);
-
-      if (error) {
-        throw new Error(`카드 레어도 조회 실패: ${error.message}`);
-      }
-
-      for (const row of data ?? []) {
-        if (row.rarity) {
-          raritySet.add(row.rarity);
-        }
-      }
-
-      if (!data || data.length < pageSize) {
-        break;
-      }
+    if (error) {
+      throw new Error(`카드 레어도 메타 조회 실패: ${error.message}`);
     }
 
-    return [...raritySet].sort((left, right) => left.localeCompare(right, "ko-KR"));
+    return (data as CardRarityMetaRow[]).map(mapRarityMetaRow);
   }
 
   async searchCards({
@@ -345,12 +341,14 @@ export class CatalogRepository {
     pageSize,
     setId,
     rarity,
+    rarityCode,
   }: {
     query: string;
     page: number;
     pageSize: number;
     setId?: number;
     rarity?: string;
+    rarityCode?: string;
   }): Promise<PaginatedResult<CardMaster>> {
     const supabase = createSupabaseAdminClient();
     const sanitizedQuery = sanitizeSearchTerm(query);
@@ -364,7 +362,9 @@ export class CatalogRepository {
         nextRequest = nextRequest.eq("set_id", setId);
       }
 
-      if (rarity) {
+      if (rarity && rarityCode && rarity !== rarityCode) {
+        nextRequest = nextRequest.in("rarity", [rarity, rarityCode]);
+      } else if (rarity) {
         nextRequest = nextRequest.eq("rarity", rarity);
       }
 

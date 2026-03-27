@@ -40,6 +40,7 @@ export const catalogQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(20).default(10),
   setId: z.coerce.number().int().positive().optional(),
   rarity: z.string().trim().max(50).optional(),
+  rarityCode: z.string().trim().max(50).optional(),
 });
 
 export const catalogSetQuerySchema = z.object({

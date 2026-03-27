@@ -12,6 +12,7 @@ import {
 } from "@/lib/cards/schema";
 import {
   type CardMaster,
+  type CardRarityMeta,
   type CardSeriesSummary,
   type CardSetSummary,
   type OwnedCardItem,
@@ -84,7 +85,7 @@ export function CardListApp({
   const [selectedSeriesName, setSelectedSeriesName] = useState("");
   const [setOptions, setSetOptions] = useState<CardSetSummary[]>([]);
   const [selectedSet, setSelectedSet] = useState<CardSetSummary | null>(null);
-  const [rarityOptions, setRarityOptions] = useState<string[]>([]);
+  const [rarityOptions, setRarityOptions] = useState<CardRarityMeta[]>([]);
   const [selectedRarity, setSelectedRarity] = useState("");
   const [collectionQuery, setCollectionQuery] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -150,7 +151,8 @@ export function CardListApp({
 
       if (raritySettled.status === "fulfilled") {
         try {
-          const rarityResult = (await raritySettled.value.json()) as ApiResponse<string[]>;
+          const rarityResult =
+            (await raritySettled.value.json()) as ApiResponse<CardRarityMeta[]>;
 
           if (!raritySettled.value.ok || !rarityResult.data) {
             throw new Error(rarityResult.error ?? "카드 레어도 조회에 실패했습니다.");
@@ -274,7 +276,15 @@ export function CardListApp({
       }
 
       if (nextRarity) {
+        const selectedRarityMeta = rarityOptions.find(
+          (rarityMeta) => rarityMeta.rarityName === nextRarity,
+        );
+
         query.set("rarity", nextRarity);
+
+        if (selectedRarityMeta?.rarityCode) {
+          query.set("rarityCode", selectedRarityMeta.rarityCode);
+        }
       }
 
       const response = await fetch(`/api/catalog/cards?${query.toString()}`, {

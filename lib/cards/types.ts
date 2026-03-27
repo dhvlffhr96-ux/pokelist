@@ -31,6 +31,15 @@ export interface CardSeriesSummary {
   setCount: number;
 }
 
+export interface CardRarityMeta {
+  rarityName: string;
+  rarityCode: string | null;
+  displayNameKo: string | null;
+  displayNameEn: string | null;
+  sortOrder: number | null;
+  badgeTone: string | null;
+}
+
 export interface CardMaster {
   id: number;
   game: string;

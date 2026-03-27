@@ -1,6 +1,33 @@
 export type Database = {
   public: {
     Tables: {
+      card_rarity_meta: {
+        Row: {
+          rarity_name: string;
+          rarity_code: string | null;
+          display_name_ko: string | null;
+          display_name_en: string | null;
+          sort_order: number | null;
+          badge_tone: string | null;
+        };
+        Insert: {
+          rarity_name: string;
+          rarity_code?: string | null;
+          display_name_ko?: string | null;
+          display_name_en?: string | null;
+          sort_order?: number | null;
+          badge_tone?: string | null;
+        };
+        Update: {
+          rarity_name?: string;
+          rarity_code?: string | null;
+          display_name_ko?: string | null;
+          display_name_en?: string | null;
+          sort_order?: number | null;
+          badge_tone?: string | null;
+        };
+        Relationships: [];
+      };
       card_sets: {
         Row: {
           id: number;
