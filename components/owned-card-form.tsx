@@ -20,6 +20,7 @@ type OwnedCardFormProps = {
   activeUserId: string | null;
   pending: boolean;
   serverError?: string | null;
+  cancelLabel?: string;
   onCancel: () => void;
   onSubmit: (values: CollectionFormValues) => Promise<boolean>;
 };
@@ -32,6 +33,7 @@ export function OwnedCardForm({
   activeUserId,
   pending,
   serverError,
+  cancelLabel,
   onCancel,
   onSubmit,
 }: OwnedCardFormProps) {
@@ -145,7 +147,7 @@ export function OwnedCardForm({
           {pending ? "저장 중..." : mode === "create" ? "내 목록에 저장" : "수정 저장"}
         </button>
         <button className="btn btn-secondary" type="button" onClick={onCancel} disabled={pending}>
-          선택 해제
+          {cancelLabel ?? "선택 해제"}
         </button>
       </div>
     </form>

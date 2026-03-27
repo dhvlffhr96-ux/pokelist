@@ -10,6 +10,7 @@ import {
 type OwnedCardGridProps = {
   cards: OwnedCardItem[];
   activeUserId: string | null;
+  selectedCardId?: string | null;
   pendingId?: string | null;
   onEdit: (card: OwnedCardItem) => void;
   onDelete: (card: OwnedCardItem) => void;
@@ -32,6 +33,7 @@ function formatDate(date: string | null) {
 export function OwnedCardGrid({
   cards,
   activeUserId,
+  selectedCardId,
   pendingId,
   onDelete,
   onEdit,
@@ -79,16 +81,33 @@ export function OwnedCardGrid({
       <div className="card-grid">
         {cards.map((card) => {
           const previewImageSrc = getPreviewImageSrc(card);
+          const isSelected = selectedCardId === card.id;
 
           return (
-            <article className="card-item" key={card.id}>
+            <article
+              className={`card-item card-item-clickable ${isSelected ? "card-item-selected" : ""}`}
+              key={card.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onEdit(card)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onEdit(card);
+                }
+              }}
+              aria-label={`${card.card.cardNameKo} 카드 수정 창 열기`}
+            >
               <div className="card-item-layout">
                 <div className="owned-card-media">
                   {previewImageSrc ? (
                     <button
                       className="owned-card-image-button"
                       type="button"
-                      onClick={() => setPreviewCard(card)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setPreviewCard(card);
+                      }}
                       aria-label={`${card.card.cardNameKo} 이미지 크게 보기`}
                     >
                       {/* External master thumbnails can come from multiple hosts. */}
@@ -130,18 +149,17 @@ export function OwnedCardGrid({
                   </div>
 
                   <div className="card-actions">
-                    <button
-                      className="btn btn-secondary"
-                      type="button"
-                      onClick={() => onEdit(card)}
-                      disabled={pendingId === card.id}
-                    >
-                      편집
-                    </button>
+                    <div className="card-item-hint">
+                      <strong>{isSelected ? "수정 창 열림" : "카드를 눌러 수정"}</strong>
+                      <span>수량, 상태, 메모를 바꿀 수 있습니다.</span>
+                    </div>
                     <button
                       className="btn btn-danger"
                       type="button"
-                      onClick={() => onDelete(card)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDelete(card);
+                      }}
                       disabled={pendingId === card.id}
                     >
                       {pendingId === card.id ? "삭제 중..." : "삭제"}

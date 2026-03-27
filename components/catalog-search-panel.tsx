@@ -105,13 +105,13 @@ export function CatalogSearchPanel({
       <div className="panel-stack">
         <div className="panel-header">
           <div>
-            <h2>Supabase 카드 마스터 검색</h2>
+            <h2>카드 검색</h2>
             <p>
-              `cards`와 `card_sets`는 조회만 하고, 저장은 하지 않습니다. 카드명,
-              카드번호, 로컬 코드 기준으로 검색합니다.
+              카드명, 카드번호, 코드 기준으로 원하는 카드를 찾을 수 있습니다. 카드를
+              누르면 바로 추가 창이 열리고, 사진은 따로 크게 볼 수 있습니다.
             </p>
           </div>
-          <span className="storage-pill">읽기 전용</span>
+          <span className="storage-pill">카탈로그</span>
         </div>
 
         {error ? <div className="alert alert-error">{error}</div> : null}
@@ -203,7 +203,7 @@ export function CatalogSearchPanel({
           {rarityError ? <div className="alert alert-error">{rarityError}</div> : null}
 
           <div className="filter-help">
-            시리즈를 먼저 고른 뒤 세트를 선택하면 해당 세트 카드만 10개씩 볼 수 있고,
+            시리즈를 먼저 고른 뒤 세트를 선택하면 해당 세트 카드만 페이지당 {pageSize}개씩 볼 수 있고,
             레어도도 함께 좁혀서 볼 수 있습니다.
           </div>
         </div>
@@ -224,67 +224,74 @@ export function CatalogSearchPanel({
                 {page} / {totalPages} 페이지
               </span>
               <span>페이지당 {pageSize}개</span>
-              <span>결과 영역만 스크롤됩니다.</span>
+              <span>카드 본문을 누르면 추가 창이 열립니다.</span>
               <span>사진을 누르면 크게 볼 수 있습니다.</span>
             </div>
 
-            <div className="scroll-area catalog-scroll-area">
-              <div className="catalog-grid">
-                {results.map((card) => {
-                  const previewImageSrc = getPreviewImageSrc(card);
+            <div className="catalog-grid">
+              {results.map((card) => {
+                const previewImageSrc = getPreviewImageSrc(card);
+                const isSelected = selectedCardId === card.id;
 
-                  return (
-                    <article
-                      className={`catalog-card ${selectedCardId === card.id ? "catalog-card-selected" : ""}`}
-                      key={card.id}
-                    >
-                      <div className="catalog-card-media">
-                        {previewImageSrc ? (
-                          <button
-                            className="catalog-card-image-button"
-                            type="button"
-                            onClick={() => setPreviewCard(card)}
-                            aria-label={`${card.cardNameKo} 이미지 크게 보기`}
-                          >
-                            {/* External master thumbnails can come from multiple hosts. */}
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={previewImageSrc} alt={card.cardNameKo} />
-                          </button>
-                        ) : (
-                          <div className="catalog-card-fallback">NO IMAGE</div>
-                        )}
-                      </div>
-
-                      <div className="catalog-card-body">
-                        <div className="catalog-card-header">
-                          <div>
-                            <h3>{card.cardNameKo}</h3>
-                            <p>{card.set.setNameKo}</p>
-                          </div>
-                          {selectedCardId === card.id ? (
-                            <span className="status-pill">선택됨</span>
-                          ) : null}
-                        </div>
-
-                        <div className="catalog-card-meta">
-                          <span>번호 {card.cardNo}</span>
-                          <span>희귀도 {card.rarity}</span>
-                          <span>유형 {CARD_TYPE_LABELS[card.cardType]}</span>
-                          <span>로컬 코드 {card.localCode ?? "없음"}</span>
-                        </div>
-
+                return (
+                  <article
+                    className={`catalog-card ${isSelected ? "catalog-card-selected" : ""}`}
+                    key={card.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onSelect(card)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onSelect(card);
+                      }
+                    }}
+                    aria-label={`${card.cardNameKo} 카드 추가 창 열기`}
+                  >
+                    <div className="catalog-card-media">
+                      {previewImageSrc ? (
                         <button
-                          className="btn btn-secondary"
+                          className="catalog-card-image-button"
                           type="button"
-                          onClick={() => onSelect(card)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setPreviewCard(card);
+                          }}
+                          aria-label={`${card.cardNameKo} 이미지 크게 보기`}
                         >
-                          이 카드 선택
+                          {/* External master thumbnails can come from multiple hosts. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={previewImageSrc} alt={card.cardNameKo} />
                         </button>
+                      ) : (
+                        <div className="catalog-card-fallback">NO IMAGE</div>
+                      )}
+                    </div>
+
+                    <div className="catalog-card-body">
+                      <div className="catalog-card-header">
+                        <div>
+                          <h3>{card.cardNameKo}</h3>
+                          <p>{card.set.setNameKo}</p>
+                        </div>
+                        {isSelected ? <span className="status-pill">추가 창 열림</span> : null}
                       </div>
-                    </article>
-                  );
-                })}
-              </div>
+
+                      <div className="catalog-card-meta">
+                        <span>번호 {card.cardNo}</span>
+                        <span>희귀도 {card.rarity}</span>
+                        <span>유형 {CARD_TYPE_LABELS[card.cardType]}</span>
+                        <span>로컬 코드 {card.localCode ?? "없음"}</span>
+                      </div>
+
+                      <div className="catalog-card-action">
+                        <strong>{isSelected ? "모달이 열려 있습니다" : "카드를 눌러 추가"}</strong>
+                        <span>수량, 상태, 메모를 바로 입력할 수 있습니다.</span>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
 
             {totalPages > 1 ? (
@@ -295,7 +302,7 @@ export function CatalogSearchPanel({
                   onClick={() => onPageChange(page - 1)}
                   disabled={page <= 1 || pending}
                 >
-                  이전 10개
+                  이전 {pageSize}개
                 </button>
                 <div className="pagination-status">
                   <strong>{page}</strong>
@@ -307,7 +314,7 @@ export function CatalogSearchPanel({
                   onClick={() => onPageChange(page + 1)}
                   disabled={page >= totalPages || pending}
                 >
-                  다음 10개
+                  다음 {pageSize}개
                 </button>
               </div>
             ) : null}

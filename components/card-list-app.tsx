@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import { CatalogSearchPanel } from "@/components/catalog-search-panel";
 import { OwnedCardForm } from "@/components/owned-card-form";
 import { OwnedCardGrid } from "@/components/owned-card-grid";
@@ -11,6 +11,8 @@ import {
   type CollectionFormValues,
 } from "@/lib/cards/schema";
 import {
+  CARD_CONDITION_LABELS,
+  CARD_TYPE_LABELS,
   type CardMaster,
   type CardRarityMeta,
   type CardSeriesSummary,
@@ -21,8 +23,6 @@ import {
 
 type CardListAppProps = {
   mode: "catalog" | "collection";
-  catalogSourceLabel: string;
-  personalStorageLabel: string;
 };
 
 type ApiResponse<T> = {
@@ -37,7 +37,8 @@ type UserCollectionResponse = {
   storagePath: string;
 };
 
-const CATALOG_PAGE_SIZE = 10;
+const CATALOG_PAGE_SIZE = 12;
+const LAST_ACTIVE_USER_ID_STORAGE_KEY = "pokelist:last-active-user-id";
 
 function matchesCollectionQuery(item: OwnedCardItem, query: string) {
   if (!query) {
@@ -67,11 +68,45 @@ function upsertOwnedItem(cards: OwnedCardItem[], nextItem: OwnedCardItem) {
   return sortCards([nextItem, ...cards.filter((card) => card.id !== nextItem.id)]);
 }
 
+function getMasterPreviewImageSrc(card: CardMaster) {
+  return card.imageUrl ?? card.thumbnailUrl;
+}
+
+function getOwnedPreviewImageSrc(card: OwnedCardItem) {
+  return card.card.imageUrl ?? card.card.thumbnailUrl;
+}
+
+function formatOwnedDate(date: string | null) {
+  if (!date) {
+    return "미입력";
+  }
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+  }).format(new Date(date));
+}
+
+function readStoredActiveUserId() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const storedUserId = window.localStorage.getItem(LAST_ACTIVE_USER_ID_STORAGE_KEY);
+  const parsedUserId = userIdSchema.safeParse(storedUserId);
+
+  if (!parsedUserId.success) {
+    window.localStorage.removeItem(LAST_ACTIVE_USER_ID_STORAGE_KEY);
+    return null;
+  }
+
+  return parsedUserId.data;
+}
+
 export function CardListApp({
   mode,
-  catalogSourceLabel,
-  personalStorageLabel,
 }: CardListAppProps) {
+  const catalogPanelRef = useRef<HTMLElement | null>(null);
+  const hasRestoredUserRef = useRef(false);
   const [userIdInput, setUserIdInput] = useState("");
   const [activeUserId, setActiveUserId] = useState<string | null>(null);
   const [storagePath, setStoragePath] = useState<string | null>(null);
@@ -183,12 +218,45 @@ export function CardListApp({
     void loadInitialFilters();
   }, [isCatalogMode]);
 
+  useEffect(() => {
+    if (!selectedMaster && !editingCard) {
+      return;
+    }
+
+    function handleKeydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSelectedMaster(null);
+        setEditingCard(null);
+        setSubmitError(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeydown);
+
+    return () => {
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [selectedMaster, editingCard]);
+
   function resetCatalogResults() {
     setCatalogResults([]);
     setCatalogPage(1);
     setCatalogTotalPages(1);
     setCatalogTotalCount(0);
     setCatalogError(null);
+  }
+
+  function scrollToCatalogTop() {
+    if (!catalogPanelRef.current) {
+      return;
+    }
+
+    const top = catalogPanelRef.current.getBoundingClientRect().top + window.scrollY - 88;
+
+    window.scrollTo({
+      top: Math.max(top, 0),
+      behavior: "smooth",
+    });
   }
 
   async function loadSeriesSets(seriesName: string) {
@@ -223,46 +291,74 @@ export function CardListApp({
     }
   }
 
-  async function loadUserCollection(rawUserId: string) {
-    const parsedUserId = userIdSchema.safeParse(rawUserId);
+  const loadUserCollection = useCallback(
+    async (rawUserId: string, options?: { restored?: boolean }) => {
+      const parsedUserId = userIdSchema.safeParse(rawUserId);
 
-    if (!parsedUserId.success) {
-      setLoadError(parsedUserId.error.issues[0]?.message ?? "사용자 ID를 확인해 주세요.");
+      if (!parsedUserId.success) {
+        setLoadError(parsedUserId.error.issues[0]?.message ?? "사용자 ID를 확인해 주세요.");
+        return;
+      }
+
+      setIsLoadingUser(true);
+      setLoadError(null);
+      setSubmitError(null);
+      setSuccessMessage(null);
+
+      try {
+        const response = await fetch(
+          `/api/users/${encodeURIComponent(parsedUserId.data)}/collection`,
+          {
+            cache: "no-store",
+          },
+        );
+        const result = (await response.json()) as ApiResponse<UserCollectionResponse>;
+
+        if (!response.ok || !result.data) {
+          throw new Error(result.error ?? "사용자 카드 목록을 불러오지 못했습니다.");
+        }
+
+        setActiveUserId(result.data.userId);
+        setUserIdInput(result.data.userId);
+        setStoragePath(result.data.storagePath);
+        setCards(sortCards(result.data.items));
+        setEditingCard(null);
+        setSelectedMaster(null);
+        window.localStorage.setItem(LAST_ACTIVE_USER_ID_STORAGE_KEY, result.data.userId);
+        setSuccessMessage(
+          options?.restored
+            ? `사용자 "${result.data.userId}" 목록을 자동으로 불러왔습니다.`
+            : `사용자 "${result.data.userId}" 목록을 불러왔습니다.`,
+        );
+      } catch (error) {
+        setLoadError(
+          error instanceof Error ? error.message : "사용자 카드 목록을 불러오지 못했습니다.",
+        );
+      } finally {
+        setIsLoadingUser(false);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (hasRestoredUserRef.current) {
       return;
     }
 
-    setIsLoadingUser(true);
-    setLoadError(null);
-    setSubmitError(null);
-    setSuccessMessage(null);
+    hasRestoredUserRef.current = true;
 
-    try {
-      const response = await fetch(
-        `/api/users/${encodeURIComponent(parsedUserId.data)}/collection`,
-        {
-          cache: "no-store",
-        },
-      );
-      const result = (await response.json()) as ApiResponse<UserCollectionResponse>;
+    const storedUserId = readStoredActiveUserId();
 
-      if (!response.ok || !result.data) {
-        throw new Error(result.error ?? "사용자 카드 목록을 불러오지 못했습니다.");
-      }
-
-      setActiveUserId(result.data.userId);
-      setStoragePath(result.data.storagePath);
-      setCards(sortCards(result.data.items));
-      setEditingCard(null);
-      setSelectedMaster(null);
-      setSuccessMessage(`사용자 "${result.data.userId}" 목록을 불러왔습니다.`);
-    } catch (error) {
-      setLoadError(
-        error instanceof Error ? error.message : "사용자 카드 목록을 불러오지 못했습니다.",
-      );
-    } finally {
-      setIsLoadingUser(false);
+    if (!storedUserId) {
+      return;
     }
-  }
+
+    setUserIdInput(storedUserId);
+    void loadUserCollection(storedUserId, {
+      restored: true,
+    });
+  }, [loadUserCollection]);
 
   async function searchCatalog(
     page = 1,
@@ -369,6 +465,10 @@ export function CardListApp({
     if (selectedSeriesName && !selectedSet) {
       setCatalogError("시리즈를 선택했다면 세트도 함께 골라 주세요.");
       return;
+    }
+
+    if (page !== catalogPage) {
+      scrollToCatalogTop();
     }
 
     void searchCatalog(page);
@@ -511,11 +611,11 @@ export function CardListApp({
           <div>
             <h2>사용자 목록 불러오기</h2>
             <p>
-              사용자 ID를 입력하면 해당 ID의 Supabase Storage 문서를 읽습니다.
-              문서가 없으면 빈 목록으로 시작하고, 첫 저장 시 자동 생성됩니다.
+              사용자 ID를 입력하면 저장된 내 카드 목록을 불러옵니다. 아직 기록이 없으면
+              빈 상태에서 시작하고, 첫 저장 시 목록이 만들어집니다.
             </p>
           </div>
-          <span className="storage-pill">{personalStorageLabel}</span>
+          <span className="storage-pill">{activeUserId ?? "사용자 미선택"}</span>
         </div>
 
         {loadError ? <div className="alert alert-error">{loadError}</div> : null}
@@ -543,16 +643,18 @@ export function CardListApp({
           </div>
         </div>
 
-        <div className="meta-strip">
-          <span>저장 방식: Supabase Storage JSON 문서</span>
-          <span>마스터 소스: {catalogSourceLabel}</span>
-          <span>스토리지 경로: {storagePath ?? "아직 불러오지 않음"}</span>
-        </div>
+        {storagePath ? (
+          <div className="results-meta">
+            <span>{activeUserId} 사용자 목록을 불러왔습니다.</span>
+          </div>
+        ) : null}
       </section>
 
       {isCatalogMode ? (
-        <div className="workspace-grid catalog-layout">
-          <section className="panel">
+        <>
+          <section className="panel" ref={catalogPanelRef}>
+            {successMessage ? <div className="alert alert-success">{successMessage}</div> : null}
+
             <CatalogSearchPanel
               query={catalogQuery}
               pending={isSearchingCatalog}
@@ -593,49 +695,94 @@ export function CardListApp({
             />
           </section>
 
-          <section className="panel sticky-panel">
-            <div className="panel-header">
-              <div>
-                <h2>내 카드 저장</h2>
-                <p>
-                  마스터 카드 정보는 읽기 전용입니다. 여기서는 수량, 상태, 메모,
-                  구매일만 사용자 스토리지 문서에 저장합니다.
-                </p>
+          {selectedMaster ? (
+            <div
+              className="form-dialog-backdrop"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="catalog-save-dialog-title"
+              onClick={() => {
+                setSelectedMaster(null);
+                setSubmitError(null);
+              }}
+            >
+              <div className="form-dialog-panel" onClick={(event) => event.stopPropagation()}>
+                <div className="form-dialog-header">
+                  <div>
+                    <span className="form-dialog-eyebrow">내 카드 추가</span>
+                    <h2 id="catalog-save-dialog-title">{selectedMaster.cardNameKo}</h2>
+                    <p>
+                      {selectedMaster.set.setNameKo} · {selectedMaster.cardNo}
+                    </p>
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={() => {
+                      setSelectedMaster(null);
+                      setSubmitError(null);
+                    }}
+                  >
+                    닫기
+                  </button>
+                </div>
+
+                <div className="form-dialog-layout">
+                  <div className="form-dialog-preview">
+                    <div className="form-dialog-image">
+                      {getMasterPreviewImageSrc(selectedMaster) ? (
+                        <>
+                          {/* External master images can come from multiple hosts. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={getMasterPreviewImageSrc(selectedMaster) ?? ""}
+                            alt={selectedMaster.cardNameKo}
+                          />
+                        </>
+                      ) : (
+                        <div className="catalog-card-fallback">NO IMAGE</div>
+                      )}
+                    </div>
+
+                    <div className="catalog-card-meta form-dialog-meta">
+                      <span>희귀도 {selectedMaster.rarity}</span>
+                      <span>유형 {CARD_TYPE_LABELS[selectedMaster.cardType]}</span>
+                      <span>로컬 코드 {selectedMaster.localCode ?? "없음"}</span>
+                    </div>
+
+                    <p className="form-dialog-copy">
+                      마스터 정보는 읽기 전용으로 유지되고, 여기서는 내 목록용 수량과 상태,
+                      메모만 저장합니다.
+                    </p>
+                  </div>
+
+                  <div className="form-dialog-form">
+                    <OwnedCardForm
+                      key={`form-${selectedMaster.id}`}
+                      mode="create"
+                      title={selectedMaster.cardNameKo}
+                      subtitle={`${selectedMaster.set.setNameKo} · ${selectedMaster.cardNo}`}
+                      initialValues={emptyCollectionFormValues}
+                      activeUserId={activeUserId}
+                      pending={isSubmitting}
+                      serverError={submitError}
+                      cancelLabel="닫기"
+                      onCancel={() => {
+                        setSelectedMaster(null);
+                        setSubmitError(null);
+                      }}
+                      onSubmit={handleSubmit}
+                    />
+                  </div>
+                </div>
               </div>
-              <span className="storage-pill">{activeUserId ?? "사용자 미선택"}</span>
             </div>
-
-            {successMessage ? <div className="alert alert-success">{successMessage}</div> : null}
-
-            {selectedMaster ? (
-              <OwnedCardForm
-                key={`form-${selectedMaster.id}`}
-                mode="create"
-                title={selectedMaster.cardNameKo}
-                subtitle={`${selectedMaster.set.setNameKo} · ${selectedMaster.cardNo}`}
-                initialValues={emptyCollectionFormValues}
-                activeUserId={activeUserId}
-                pending={isSubmitting}
-                serverError={submitError}
-                onCancel={() => {
-                  setSelectedMaster(null);
-                  setSubmitError(null);
-                }}
-                onSubmit={handleSubmit}
-              />
-            ) : (
-              <div className="empty-state">
-                카드 검색 결과에서 저장할 카드를 선택하세요.
-                <br />
-                사용자 ID를 아직 불러오지 않았다면 상단에서 먼저 불러와야 저장됩니다.
-              </div>
-            )}
-          </section>
-        </div>
+          ) : null}
+        </>
       ) : null}
 
       {isCollectionMode ? (
-        <div className="workspace-grid collection-layout">
+        <>
           <section className="panel list-panel">
             <div className="panel-header">
               <div>
@@ -655,62 +802,109 @@ export function CardListApp({
 
             <div className="results-meta">
               <span>{visibleCards.length}개 표시</span>
-              <span>목록 영역만 스크롤됩니다.</span>
+              <span>카드를 누르면 수정 창이 열립니다.</span>
               <span>사진을 누르면 크게 볼 수 있습니다.</span>
             </div>
 
-            <div className="scroll-area list-scroll-area">
-              <OwnedCardGrid
-                cards={visibleCards}
-                activeUserId={activeUserId}
-                pendingId={pendingDeleteId}
-                onEdit={(card) => {
-                  setEditingCard(card);
-                  setSelectedMaster(null);
-                  setSubmitError(null);
-                  setSuccessMessage(null);
-                }}
-                onDelete={handleDelete}
-              />
-            </div>
+            <OwnedCardGrid
+              cards={visibleCards}
+              activeUserId={activeUserId}
+              selectedCardId={editingCard?.id ?? null}
+              pendingId={pendingDeleteId}
+              onEdit={(card) => {
+                setEditingCard(card);
+                setSelectedMaster(null);
+                setSubmitError(null);
+                setSuccessMessage(null);
+              }}
+              onDelete={handleDelete}
+            />
           </section>
 
-          <section className="panel sticky-panel">
-            <div className="panel-header">
-              <div>
-                <h2>내 카드 수정</h2>
-                <p>
-                  저장된 카드를 선택하면 수량, 상태, 메모, 구매일을 수정할 수 있습니다.
-                </p>
-              </div>
-              <span className="storage-pill">{activeUserId ?? "사용자 미선택"}</span>
-            </div>
+          {editingCard ? (
+            <div
+              className="form-dialog-backdrop"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="collection-edit-dialog-title"
+              onClick={() => {
+                setEditingCard(null);
+                setSubmitError(null);
+              }}
+            >
+              <div className="form-dialog-panel" onClick={(event) => event.stopPropagation()}>
+                <div className="form-dialog-header">
+                  <div>
+                    <span className="form-dialog-eyebrow">내 카드 수정</span>
+                    <h2 id="collection-edit-dialog-title">{editingCard.card.cardNameKo}</h2>
+                    <p>
+                      {editingCard.card.setNameKo} · {editingCard.card.cardNo}
+                    </p>
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={() => {
+                      setEditingCard(null);
+                      setSubmitError(null);
+                    }}
+                  >
+                    닫기
+                  </button>
+                </div>
 
-            {editingCard ? (
-              <OwnedCardForm
-                key={`form-${editingCard.id}`}
-                mode="edit"
-                title={editingCard.card.cardNameKo}
-                subtitle={`${editingCard.card.setNameKo} · ${editingCard.card.cardNo}`}
-                initialValues={toCollectionFormValues(editingCard)}
-                activeUserId={activeUserId}
-                pending={isSubmitting}
-                serverError={submitError}
-                onCancel={() => {
-                  setEditingCard(null);
-                  setSubmitError(null);
-                }}
-                onSubmit={handleSubmit}
-              />
-            ) : (
-              <div className="empty-state">
-                왼쪽 목록에서 편집할 카드를 선택하세요.
-                <br />
-                새 카드는 카드 검색 페이지에서 추가할 수 있습니다.
+                <div className="form-dialog-layout">
+                  <div className="form-dialog-preview">
+                    <div className="form-dialog-image">
+                      {getOwnedPreviewImageSrc(editingCard) ? (
+                        <>
+                          {/* External master images can come from multiple hosts. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={getOwnedPreviewImageSrc(editingCard) ?? ""}
+                            alt={editingCard.card.cardNameKo}
+                          />
+                        </>
+                      ) : (
+                        <div className="catalog-card-fallback">NO IMAGE</div>
+                      )}
+                    </div>
+
+                    <div className="catalog-card-meta form-dialog-meta">
+                      <span>보유 수량 {editingCard.quantity}</span>
+                      <span>상태 {CARD_CONDITION_LABELS[editingCard.condition]}</span>
+                      <span>구매일 {formatOwnedDate(editingCard.acquiredAt)}</span>
+                    </div>
+
+                    <p className="form-dialog-copy">
+                      저장된 내 카드 기록을 수정합니다. 카드 마스터 정보는 그대로 두고,
+                      수량과 상태, 메모, 구매일만 업데이트합니다.
+                    </p>
+                  </div>
+
+                  <div className="form-dialog-form">
+                    <OwnedCardForm
+                      key={`form-${editingCard.id}`}
+                      mode="edit"
+                      title={editingCard.card.cardNameKo}
+                      subtitle={`${editingCard.card.setNameKo} · ${editingCard.card.cardNo}`}
+                      initialValues={toCollectionFormValues(editingCard)}
+                      activeUserId={activeUserId}
+                      pending={isSubmitting}
+                      serverError={submitError}
+                      cancelLabel="닫기"
+                      onCancel={() => {
+                        setEditingCard(null);
+                        setSubmitError(null);
+                      }}
+                      onSubmit={handleSubmit}
+                    />
+                  </div>
+                </div>
               </div>
-            )}
-          </section>
-        </div>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </section>
   );
