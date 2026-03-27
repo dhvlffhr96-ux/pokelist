@@ -213,19 +213,18 @@ export class CatalogRepository {
     const supabase = createSupabaseAdminClient();
     const { data, error } = await supabase
       .from("card_sets")
-      .select("series_name")
+      .select("series_name, release_date")
       .eq("game", "pokemon")
       .eq("language", "ko")
       .eq("is_active", true)
       .not("series_name", "is", null)
-      .order("series_name", { ascending: true })
-      .limit(limit);
+      .limit(5000);
 
     if (error) {
       throw new Error(`카드 시리즈 조회 실패: ${error.message}`);
     }
 
-    const seriesCounts = new Map<string, number>();
+    const seriesStats = new Map<string, { setCount: number; latestReleaseDate: string | null }>();
 
     for (const row of data ?? []) {
       const seriesName = row.series_name;
@@ -234,17 +233,49 @@ export class CatalogRepository {
         continue;
       }
 
-      seriesCounts.set(seriesName, (seriesCounts.get(seriesName) ?? 0) + 1);
+      const current = seriesStats.get(seriesName) ?? {
+        setCount: 0,
+        latestReleaseDate: null,
+      };
+      const nextReleaseDate =
+        current.latestReleaseDate && row.release_date
+          ? current.latestReleaseDate > row.release_date
+            ? current.latestReleaseDate
+            : row.release_date
+          : current.latestReleaseDate ?? row.release_date;
+
+      seriesStats.set(seriesName, {
+        setCount: current.setCount + 1,
+        latestReleaseDate: nextReleaseDate ?? null,
+      });
     }
 
-    return [...seriesCounts.entries()]
+    return [...seriesStats.entries()]
       .map(
-        ([name, setCount]): CardSeriesSummary => ({
+        ([name, stats]): CardSeriesSummary => ({
           name,
-          setCount,
+          setCount: stats.setCount,
         }),
       )
-      .sort((left, right) => left.name.localeCompare(right.name, "ko-KR"));
+      .sort((left, right) => {
+        const leftLatest = seriesStats.get(left.name)?.latestReleaseDate;
+        const rightLatest = seriesStats.get(right.name)?.latestReleaseDate;
+
+        if (leftLatest && rightLatest && leftLatest !== rightLatest) {
+          return rightLatest.localeCompare(leftLatest, "ko-KR");
+        }
+
+        if (leftLatest && !rightLatest) {
+          return -1;
+        }
+
+        if (!leftLatest && rightLatest) {
+          return 1;
+        }
+
+        return left.name.localeCompare(right.name, "ko-KR");
+      })
+      .slice(0, limit);
   }
 
   async searchCardSets(seriesName: string | undefined, limit: number) {
