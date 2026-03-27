@@ -32,12 +32,14 @@ export interface CardSeriesSummary {
 }
 
 export interface CardRarityMeta {
+  filterKey: string;
   rarityName: string;
   rarityCode: string | null;
   displayNameKo: string | null;
   displayNameEn: string | null;
   sortOrder: number | null;
   badgeTone: string | null;
+  filterValues: string[];
 }
 
 export interface CardMaster {

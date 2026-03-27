@@ -277,13 +277,15 @@ export function CardListApp({
 
       if (nextRarity) {
         const selectedRarityMeta = rarityOptions.find(
-          (rarityMeta) => rarityMeta.rarityName === nextRarity,
+          (rarityMeta) => rarityMeta.filterKey === nextRarity,
         );
 
-        query.set("rarity", nextRarity);
-
-        if (selectedRarityMeta?.rarityCode) {
-          query.set("rarityCode", selectedRarityMeta.rarityCode);
+        if (selectedRarityMeta) {
+          for (const rarityValue of selectedRarityMeta.filterValues) {
+            query.append("rarity", rarityValue);
+          }
+        } else {
+          query.append("rarity", nextRarity);
         }
       }
 

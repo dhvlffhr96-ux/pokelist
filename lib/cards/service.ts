@@ -19,16 +19,14 @@ export async function searchCatalogCards(params: {
   page?: number;
   pageSize?: number;
   setId?: number;
-  rarity?: string;
-  rarityCode?: string;
+  rarities?: string[];
 }) {
   const parsed = catalogQuerySchema.parse({
     q: params.query,
     page: params.page,
     pageSize: params.pageSize,
     setId: params.setId,
-    rarity: params.rarity,
-    rarityCode: params.rarityCode,
+    rarities: params.rarities,
   });
 
   return catalogRepository.searchCards({
@@ -36,8 +34,7 @@ export async function searchCatalogCards(params: {
     page: parsed.page,
     pageSize: parsed.pageSize,
     setId: parsed.setId,
-    rarity: parsed.rarity,
-    rarityCode: parsed.rarityCode,
+    rarities: parsed.rarities,
   });
 }
 

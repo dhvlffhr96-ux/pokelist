@@ -190,7 +190,7 @@ export function CatalogSearchPanel({
                   {rarityPending ? "레어도 불러오는 중..." : "전체 레어도"}
                 </option>
                 {rarityOptions.map((rarity) => (
-                  <option key={rarity.rarityName} value={rarity.rarityName}>
+                  <option key={rarity.filterKey} value={rarity.filterKey}>
                     {getRarityLabel(rarity)}
                   </option>
                 ))}

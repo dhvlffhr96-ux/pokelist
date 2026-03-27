@@ -8,15 +8,13 @@ export async function GET(request: Request) {
     const page = searchParams.get("page") ?? "1";
     const pageSize = searchParams.get("pageSize") ?? "10";
     const setId = searchParams.get("setId");
-    const rarity = searchParams.get("rarity") ?? "";
-    const rarityCode = searchParams.get("rarityCode") ?? "";
+    const rarities = searchParams.getAll("rarity").filter(Boolean);
     const cards = await searchCatalogCards({
       query,
       page: Number(page),
       pageSize: Number(pageSize),
       setId: setId ? Number(setId) : undefined,
-      rarity: rarity || undefined,
-      rarityCode: rarityCode || undefined,
+      rarities: rarities.length > 0 ? rarities : undefined,
     });
 
     return NextResponse.json({ data: cards });

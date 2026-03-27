@@ -212,12 +212,16 @@ function mapSetRow(row: CardSetRow): CardSetSummary {
 
 function mapRarityMetaRow(row: CardRarityMetaRow): CardRarityMeta {
   return {
+    filterKey: row.rarity_code?.trim() || row.rarity_name,
     rarityName: row.rarity_name,
     rarityCode: row.rarity_code,
     displayNameKo: row.display_name_ko,
     displayNameEn: row.display_name_en,
     sortOrder: row.sort_order,
     badgeTone: row.badge_tone,
+    filterValues: [row.rarity_name, row.rarity_code].filter(
+      (value): value is string => Boolean(value),
+    ),
   };
 }
 
@@ -332,7 +336,51 @@ export class CatalogRepository {
       throw new Error(`카드 레어도 메타 조회 실패: ${error.message}`);
     }
 
-    return (data as CardRarityMetaRow[]).map(mapRarityMetaRow);
+    const grouped = new Map<string, CardRarityMeta>();
+
+    for (const row of (data as CardRarityMetaRow[]).map(mapRarityMetaRow)) {
+      const existing = grouped.get(row.filterKey);
+
+      if (!existing) {
+        grouped.set(row.filterKey, row);
+        continue;
+      }
+
+      grouped.set(row.filterKey, {
+        ...existing,
+        rarityName: existing.rarityName || row.rarityName,
+        rarityCode: existing.rarityCode ?? row.rarityCode,
+        displayNameKo: existing.displayNameKo ?? row.displayNameKo,
+        displayNameEn: existing.displayNameEn ?? row.displayNameEn,
+        sortOrder:
+          existing.sortOrder === null
+            ? row.sortOrder
+            : row.sortOrder === null
+              ? existing.sortOrder
+              : Math.min(existing.sortOrder, row.sortOrder),
+        badgeTone: existing.badgeTone ?? row.badgeTone,
+        filterValues: [...new Set([...existing.filterValues, ...row.filterValues])],
+      });
+    }
+
+    return [...grouped.values()].sort((left, right) => {
+      if (left.sortOrder !== null && right.sortOrder !== null && left.sortOrder !== right.sortOrder) {
+        return left.sortOrder - right.sortOrder;
+      }
+
+      if (left.sortOrder !== null && right.sortOrder === null) {
+        return -1;
+      }
+
+      if (left.sortOrder === null && right.sortOrder !== null) {
+        return 1;
+      }
+
+      const leftLabel = left.rarityCode ?? left.displayNameKo ?? left.displayNameEn ?? left.rarityName;
+      const rightLabel = right.rarityCode ?? right.displayNameKo ?? right.displayNameEn ?? right.rarityName;
+
+      return leftLabel.localeCompare(rightLabel, "ko-KR");
+    });
   }
 
   async searchCards({
@@ -340,15 +388,13 @@ export class CatalogRepository {
     page,
     pageSize,
     setId,
-    rarity,
-    rarityCode,
+    rarities,
   }: {
     query: string;
     page: number;
     pageSize: number;
     setId?: number;
-    rarity?: string;
-    rarityCode?: string;
+    rarities?: string[];
   }): Promise<PaginatedResult<CardMaster>> {
     const supabase = createSupabaseAdminClient();
     const sanitizedQuery = sanitizeSearchTerm(query);
@@ -362,10 +408,10 @@ export class CatalogRepository {
         nextRequest = nextRequest.eq("set_id", setId);
       }
 
-      if (rarity && rarityCode && rarity !== rarityCode) {
-        nextRequest = nextRequest.in("rarity", [rarity, rarityCode]);
-      } else if (rarity) {
-        nextRequest = nextRequest.eq("rarity", rarity);
+      if (rarities && rarities.length > 1) {
+        nextRequest = nextRequest.in("rarity", rarities);
+      } else if (rarities && rarities.length === 1) {
+        nextRequest = nextRequest.eq("rarity", rarities[0]);
       }
 
       if (sanitizedQuery) {
