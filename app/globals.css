@@ -524,7 +524,7 @@ a {
 .collection-toolbar {
   display: grid;
   gap: 12px;
-  width: min(100%, 460px);
+  width: min(100%, 760px);
 }
 
 .collection-toolbar input {
@@ -559,6 +559,33 @@ a {
   border-color: rgba(255, 123, 34, 0.38);
   background: rgba(255, 123, 34, 0.12);
   color: var(--brand-strong);
+}
+
+.collection-filter-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(180px, 0.9fr) repeat(2, minmax(0, 1fr));
+  align-items: end;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(18, 18, 18, 0.96);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.checkbox-field input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--brand);
 }
 
 .card-grid {
@@ -661,6 +688,22 @@ a {
 .results-shell {
   display: grid;
   gap: 12px;
+}
+
+.results-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.results-filter-bar input {
+  flex: 1 1 280px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(18, 18, 18, 0.96);
+  color: var(--text);
 }
 
 .results-meta {
@@ -826,7 +869,7 @@ a {
   padding: 0;
   border: 0;
   background: transparent;
-  cursor: zoom-in;
+  cursor: pointer;
 }
 
 .catalog-card-media img {
@@ -986,7 +1029,7 @@ a {
 .image-lightbox {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 1200;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -1103,6 +1146,18 @@ a {
   gap: 16px;
 }
 
+.form-dialog-image-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: zoom-in;
+}
+
+.form-dialog-image-button:disabled {
+  cursor: default;
+}
+
 .form-dialog-image {
   overflow: hidden;
   border-radius: 22px;
@@ -1132,6 +1187,41 @@ a {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 24px;
   background: rgba(18, 18, 18, 0.94);
+}
+
+.detail-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.detail-field-list {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-field {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.detail-field span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.detail-field strong {
+  color: var(--text);
+  line-height: 1.55;
+}
+
+.detail-field-full {
+  min-height: 112px;
+  align-content: start;
 }
 
 .card-item {
@@ -1237,7 +1327,7 @@ a {
   padding: 0;
   border: 0;
   background: transparent;
-  cursor: zoom-in;
+  cursor: pointer;
 }
 
 .owned-card-media img {
@@ -1356,6 +1446,10 @@ a {
   }
 
   .filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .collection-filter-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1535,6 +1629,14 @@ a {
 
   .form-dialog-header {
     flex-direction: column;
+  }
+
+  .detail-dialog-actions {
+    width: 100%;
+  }
+
+  .detail-dialog-actions .btn {
+    width: 100%;
   }
 
   .card-grid {

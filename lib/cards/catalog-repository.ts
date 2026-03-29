@@ -66,6 +66,23 @@ function sanitizeSearchTerm(query: string) {
   return query.trim().replace(/[,%()]/g, " ").replace(/\s+/g, " ").slice(0, 80);
 }
 
+async function resolveSeriesSetIds(seriesName: string) {
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("card_sets")
+    .select("id")
+    .eq("game", "pokemon")
+    .eq("language", "ko")
+    .eq("is_active", true)
+    .eq("series_name", seriesName);
+
+  if (error) {
+    throw new Error(`카드 시리즈 세트 조회 실패: ${error.message}`);
+  }
+
+  return (data ?? []).map((row) => row.id);
+}
+
 function normalizeMatchText(value: string | null | undefined) {
   return (value ?? "").trim().toLocaleLowerCase("ko-KR");
 }
@@ -385,8 +402,23 @@ export class CatalogRepository {
     return (data as CardSetRow[]).map(mapSetRow);
   }
 
-  async listCardRarities(setId?: number) {
+  async listCardRarities({
+    query,
+    seriesName,
+    setId,
+  }: {
+    query?: string;
+    seriesName?: string;
+    setId?: number;
+  }) {
     const supabase = createSupabaseAdminClient();
+    const sanitizedQuery = sanitizeSearchTerm(query ?? "");
+    const seriesSetIds = seriesName ? await resolveSeriesSetIds(seriesName) : null;
+
+    if (seriesName && !setId && seriesSetIds && seriesSetIds.length === 0) {
+      return [];
+    }
+
     let rarityValueRequest = supabase
       .from("cards")
       .select("rarity")
@@ -396,6 +428,21 @@ export class CatalogRepository {
 
     if (setId) {
       rarityValueRequest = rarityValueRequest.eq("set_id", setId);
+    } else if (seriesSetIds) {
+      rarityValueRequest = rarityValueRequest.in("set_id", seriesSetIds);
+    }
+
+    if (sanitizedQuery) {
+      const like = `%${sanitizedQuery}%`;
+      rarityValueRequest = rarityValueRequest.or(
+        [
+          `card_name_ko.ilike.${like}`,
+          `card_name_en.ilike.${like}`,
+          `card_name_jp.ilike.${like}`,
+          `card_no.ilike.${like}`,
+          `local_code.ilike.${like}`,
+        ].join(","),
+      );
     }
 
     const [{ data: rarityValueRows, error: rarityValueError }, { data, error }] =
@@ -445,17 +492,31 @@ export class CatalogRepository {
     query,
     page,
     pageSize,
+    seriesName,
     setId,
     rarities,
   }: {
     query: string;
     page: number;
     pageSize: number;
+    seriesName?: string;
     setId?: number;
     rarities?: string[];
   }): Promise<PaginatedResult<CardMaster>> {
     const supabase = createSupabaseAdminClient();
     const sanitizedQuery = sanitizeSearchTerm(query);
+    const seriesSetIds = seriesName ? await resolveSeriesSetIds(seriesName) : null;
+
+    if (seriesName && !setId && seriesSetIds && seriesSetIds.length === 0) {
+      return {
+        items: [],
+        page: 1,
+        pageSize,
+        totalCount: 0,
+        totalPages: 1,
+      };
+    }
+
     const applyCommonFilters = <T>(request: T) => {
       let nextRequest = (request as any)
         .eq("game", "pokemon")
@@ -464,6 +525,8 @@ export class CatalogRepository {
 
       if (setId) {
         nextRequest = nextRequest.eq("set_id", setId);
+      } else if (seriesSetIds) {
+        nextRequest = nextRequest.in("set_id", seriesSetIds);
       }
 
       if (rarities && rarities.length > 1) {
@@ -535,12 +598,30 @@ export class CatalogRepository {
     const rows = data as CatalogSearchRow[];
     const rankedRows = sanitizedQuery
       ? [...rows].sort((left, right) => compareRankedRows(left, right, sanitizedQuery))
-      : [...rows].sort((left, right) =>
-          left.card_no.localeCompare(right.card_no, "ko-KR", {
-            numeric: true,
-            sensitivity: "base",
-          }) || left.id - right.id,
-        );
+      : [...rows].sort((left, right) => {
+          const leftReleaseDate = left.card_sets?.release_date ?? "";
+          const rightReleaseDate = right.card_sets?.release_date ?? "";
+
+          if (leftReleaseDate !== rightReleaseDate) {
+            return rightReleaseDate.localeCompare(leftReleaseDate, "ko-KR");
+          }
+
+          const setNameCompare = (left.card_sets?.set_name_ko ?? "").localeCompare(
+            right.card_sets?.set_name_ko ?? "",
+            "ko-KR",
+          );
+
+          if (setNameCompare !== 0) {
+            return setNameCompare;
+          }
+
+          return (
+            left.card_no.localeCompare(right.card_no, "ko-KR", {
+              numeric: true,
+              sensitivity: "base",
+            }) || left.id - right.id
+          );
+        });
 
     const startIndex = (safePage - 1) * pageSize;
     const items = rankedRows.slice(startIndex, startIndex + pageSize).map(mapRowToMaster);

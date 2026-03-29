@@ -38,6 +38,7 @@ export const catalogQuerySchema = z.object({
   q: z.string().trim().max(80, "검색어는 80자 이하로 입력해 주세요.").default(""),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(20).default(10),
+  seriesName: z.string().trim().max(120).optional(),
   setId: z.coerce.number().int().positive().optional(),
   rarities: z.array(z.string().trim().max(50)).optional(),
 });
@@ -52,6 +53,8 @@ export const catalogSeriesQuerySchema = z.object({
 });
 
 export const catalogRarityQuerySchema = z.object({
+  q: z.string().trim().max(80).optional(),
+  seriesName: z.string().trim().max(120).optional(),
   setId: z.coerce.number().int().positive().optional(),
 });
 

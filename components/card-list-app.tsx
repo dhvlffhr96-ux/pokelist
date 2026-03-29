@@ -2,7 +2,9 @@
 
 import { useCallback, useDeferredValue, useEffect, useRef, useState, type ReactNode } from "react";
 import { CatalogSearchPanel } from "@/components/catalog-search-panel";
+import { ImageLightbox } from "@/components/image-lightbox";
 import { OwnedCardForm } from "@/components/owned-card-form";
+import { OwnedCardDetailDialog } from "@/components/owned-card-detail-dialog";
 import { OwnedCardGrid } from "@/components/owned-card-grid";
 import { useAppAuth } from "@/components/app-auth-context";
 import {
@@ -22,6 +24,7 @@ import {
   type CardSeriesSummary,
   type CardSetSummary,
   type OwnedCardItem,
+  type OwnedCardSnapshot,
   type PaginatedResult,
 } from "@/lib/cards/types";
 
@@ -44,6 +47,12 @@ type UserCollectionResponse = {
 
 type CollectionViewMode = "detail" | "compact";
 type CatalogViewMode = "detail" | "compact";
+type LightboxState = {
+  alt: string;
+  imageSrc: string;
+  subtitle: string;
+  title: string;
+};
 
 const CATALOG_PAGE_SIZE = 12;
 const LAST_ACTIVE_USER_ID_STORAGE_KEY = "pokelist:last-active-user-id";
@@ -94,6 +103,37 @@ function formatOwnedDate(date: string | null) {
   }).format(new Date(date));
 }
 
+function getOwnedSetFilterKey(card: OwnedCardSnapshot) {
+  return `${card.setNameKo}::${card.setCode ?? ""}`;
+}
+
+function getOwnedSetFilterLabel(card: OwnedCardSnapshot) {
+  return card.setCode ? `${card.setNameKo} · ${card.setCode}` : card.setNameKo;
+}
+
+function getRarityFilterLabel(rarity: CardRarityMeta) {
+  return rarity.rarityCode ?? rarity.displayNameKo ?? rarity.displayNameEn ?? rarity.rarityName;
+}
+
+function getOwnedSetOptions(cards: OwnedCardItem[]) {
+  const grouped = new Map<string, string>();
+
+  for (const card of cards) {
+    const key = getOwnedSetFilterKey(card.card);
+
+    if (!grouped.has(key)) {
+      grouped.set(key, getOwnedSetFilterLabel(card.card));
+    }
+  }
+
+  return [...grouped.entries()]
+    .map(([key, label]) => ({
+      key,
+      label,
+    }))
+    .sort((left, right) => left.label.localeCompare(right.label, "ko-KR"));
+}
+
 function readStoredActiveUserId() {
   if (typeof window === "undefined") {
     return null;
@@ -117,6 +157,7 @@ export function CardListApp({
   const catalogPanelRef = useRef<HTMLElement | null>(null);
   const pendingCatalogScrollRef = useRef(false);
   const hasRestoredUserRef = useRef(false);
+  const autoLoadedSessionUserRef = useRef<string | null>(null);
   const { sessionUserId } = useAppAuth();
   const { setSummary } = useAppSummary();
   const [userIdInput, setUserIdInput] = useState("");
@@ -124,7 +165,9 @@ export function CardListApp({
   const [storagePath, setStoragePath] = useState<string | null>(null);
   const [cards, setCards] = useState<OwnedCardItem[]>([]);
   const [editingCard, setEditingCard] = useState<OwnedCardItem | null>(null);
+  const [inspectCard, setInspectCard] = useState<OwnedCardItem | null>(null);
   const [selectedMaster, setSelectedMaster] = useState<CardMaster | null>(null);
+  const [lightboxState, setLightboxState] = useState<LightboxState | null>(null);
   const [catalogQuery, setCatalogQuery] = useState("");
   const [catalogResults, setCatalogResults] = useState<CardMaster[]>([]);
   const [catalogPage, setCatalogPage] = useState(1);
@@ -139,6 +182,9 @@ export function CardListApp({
   const [catalogViewMode, setCatalogViewMode] = useState<CatalogViewMode>("detail");
   const [collectionQuery, setCollectionQuery] = useState("");
   const [collectionViewMode, setCollectionViewMode] = useState<CollectionViewMode>("detail");
+  const [collectionOnlyMultiOwned, setCollectionOnlyMultiOwned] = useState(false);
+  const [selectedCollectionRarity, setSelectedCollectionRarity] = useState("");
+  const [selectedCollectionSet, setSelectedCollectionSet] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [seriesError, setSeriesError] = useState<string | null>(null);
@@ -161,7 +207,33 @@ export function CardListApp({
     sessionUserId && activeUserId && sessionUserId === activeUserId,
   );
 
-  const visibleCards = cards.filter((card) => matchesCollectionQuery(card, deferredQuery));
+  const searchedCards = cards.filter((card) => matchesCollectionQuery(card, deferredQuery));
+  const collectionSetOptions = getOwnedSetOptions(searchedCards);
+  const visibleCards = searchedCards.filter((card) => {
+    if (collectionOnlyMultiOwned && card.quantity < 2) {
+      return false;
+    }
+
+    if (selectedCollectionRarity) {
+      const selectedRarityMeta = rarityOptions.find(
+        (rarityMeta) => rarityMeta.filterKey === selectedCollectionRarity,
+      );
+
+      if (selectedRarityMeta) {
+        if (!selectedRarityMeta.filterValues.includes(card.card.rarity)) {
+          return false;
+        }
+      } else if (card.card.rarity !== selectedCollectionRarity) {
+        return false;
+      }
+    }
+
+    if (selectedCollectionSet && getOwnedSetFilterKey(card.card) !== selectedCollectionSet) {
+      return false;
+    }
+
+    return true;
+  });
   const totalQuantity = cards.reduce((sum, card) => sum + card.quantity, 0);
   const uniqueSets = new Set(cards.map((card) => card.card.setNameKo)).size;
 
@@ -181,15 +253,27 @@ export function CardListApp({
     return null;
   }
 
-  const loadRarityOptions = useCallback(async (setId?: number) => {
+  const loadRarityOptions = useCallback(async (params?: {
+    query?: string;
+    seriesName?: string;
+    setId?: number;
+  }) => {
     setIsLoadingRarities(true);
     setRarityError(null);
 
     try {
       const query = new URLSearchParams();
 
-      if (setId) {
-        query.set("setId", String(setId));
+      if (params?.query?.trim()) {
+        query.set("q", params.query.trim());
+      }
+
+      if (params?.seriesName?.trim()) {
+        query.set("seriesName", params.seriesName.trim());
+      }
+
+      if (params?.setId) {
+        query.set("setId", String(params.setId));
       }
 
       const response = await fetch(
@@ -261,7 +345,15 @@ export function CardListApp({
   }, [isCatalogMode, loadRarityOptions]);
 
   useEffect(() => {
-    if (!selectedMaster && !editingCard) {
+    if (!isCollectionMode && !isViewerMode) {
+      return;
+    }
+
+    void loadRarityOptions();
+  }, [isCollectionMode, isViewerMode, loadRarityOptions]);
+
+  useEffect(() => {
+    if (lightboxState || (!selectedMaster && !editingCard && !inspectCard)) {
       return;
     }
 
@@ -269,6 +361,7 @@ export function CardListApp({
       if (event.key === "Escape") {
         setSelectedMaster(null);
         setEditingCard(null);
+        setInspectCard(null);
         setSubmitError(null);
       }
     }
@@ -278,7 +371,7 @@ export function CardListApp({
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [selectedMaster, editingCard]);
+  }, [editingCard, inspectCard, lightboxState, selectedMaster]);
 
   useEffect(() => {
     setSummary({
@@ -288,6 +381,24 @@ export function CardListApp({
       uniqueSets,
     });
   }, [activeUserId, cards.length, setSummary, totalQuantity, uniqueSets]);
+
+  useEffect(() => {
+    if (
+      selectedCollectionRarity &&
+      !rarityOptions.some((rarity) => rarity.filterKey === selectedCollectionRarity)
+    ) {
+      setSelectedCollectionRarity("");
+    }
+  }, [rarityOptions, selectedCollectionRarity]);
+
+  useEffect(() => {
+    if (
+      selectedCollectionSet &&
+      !collectionSetOptions.some((option) => option.key === selectedCollectionSet)
+    ) {
+      setSelectedCollectionSet("");
+    }
+  }, [collectionSetOptions, selectedCollectionSet]);
 
   useEffect(() => {
     if (!isCatalogMode || !pendingCatalogScrollRef.current || isSearchingCatalog) {
@@ -354,23 +465,17 @@ export function CardListApp({
     }
   }
 
-  function syncSelectedRarityWithOptions(options: CardRarityMeta[] | null) {
-    if (!options) {
-      return selectedRarity;
-    }
-
-    if (!selectedRarity) {
+  function resolveSelectedRarityWithOptions(
+    options: CardRarityMeta[] | null,
+    currentSelection: string,
+  ) {
+    if (!options || !currentSelection) {
       return "";
     }
 
-    const isAvailable = options.some((rarity) => rarity.filterKey === selectedRarity);
+    const isAvailable = options.some((rarity) => rarity.filterKey === currentSelection);
 
-    if (isAvailable) {
-      return selectedRarity;
-    }
-
-    setSelectedRarity("");
-    return "";
+    return isAvailable ? currentSelection : "";
   }
 
   const loadUserCollection = useCallback(
@@ -379,7 +484,7 @@ export function CardListApp({
 
       if (!parsedUserId.success) {
         setLoadError(parsedUserId.error.issues[0]?.message ?? "사용자 ID를 확인해 주세요.");
-        return;
+        return false;
       }
 
       setIsLoadingUser(true);
@@ -405,19 +510,28 @@ export function CardListApp({
         setStoragePath(result.data.storagePath);
         setCards(sortCards(result.data.items));
         setEditingCard(null);
+        setInspectCard(null);
         setSelectedMaster(null);
+        setCollectionOnlyMultiOwned(false);
+        setSelectedCollectionRarity("");
+        setSelectedCollectionSet("");
         window.localStorage.setItem(LAST_ACTIVE_USER_ID_STORAGE_KEY, result.data.userId);
         setSuccessMessage(
           options?.restored
             ? `사용자 "${result.data.userId}" 목록을 자동으로 불러왔습니다.`
             : `사용자 "${result.data.userId}" 목록을 불러왔습니다.`,
         );
+        return true;
       } catch (error) {
         setActiveUserId(null);
         setStoragePath(null);
         setCards([]);
         setEditingCard(null);
+        setInspectCard(null);
         setSelectedMaster(null);
+        setCollectionOnlyMultiOwned(false);
+        setSelectedCollectionRarity("");
+        setSelectedCollectionSet("");
         setLoadError(
           error instanceof Error ? error.message : "사용자 카드 목록을 불러오지 못했습니다.",
         );
@@ -425,6 +539,7 @@ export function CardListApp({
         if (options?.restored) {
           window.localStorage.removeItem(LAST_ACTIVE_USER_ID_STORAGE_KEY);
         }
+        return false;
       } finally {
         setIsLoadingUser(false);
       }
@@ -458,6 +573,47 @@ export function CardListApp({
   }, [sessionUserId, userIdInput]);
 
   useEffect(() => {
+    if (!sessionUserId) {
+      autoLoadedSessionUserRef.current = null;
+      return;
+    }
+
+    if (!isCatalogMode && !isCollectionMode) {
+      return;
+    }
+
+    if (activeUserId === sessionUserId) {
+      autoLoadedSessionUserRef.current = sessionUserId;
+
+      if (userIdInput !== sessionUserId) {
+        setUserIdInput(sessionUserId);
+      }
+
+      return;
+    }
+
+    if (autoLoadedSessionUserRef.current === sessionUserId) {
+      return;
+    }
+
+    autoLoadedSessionUserRef.current = sessionUserId;
+    setUserIdInput(sessionUserId);
+
+    void loadUserCollection(sessionUserId).then((success) => {
+      if (!success) {
+        autoLoadedSessionUserRef.current = null;
+      }
+    });
+  }, [
+    activeUserId,
+    isCatalogMode,
+    isCollectionMode,
+    loadUserCollection,
+    sessionUserId,
+    userIdInput,
+  ]);
+
+  useEffect(() => {
     if (!isCatalogMode) {
       return;
     }
@@ -487,8 +643,10 @@ export function CardListApp({
 
   async function searchCatalog(
     page = 1,
+    nextSeriesName = selectedSeriesName || undefined,
     nextSet = selectedSet,
-    nextRarity = selectedRarity || undefined,
+    nextRarity = selectedRarity,
+    raritySourceOptions = rarityOptions,
   ) {
     setIsSearchingCatalog(true);
     setCatalogError(null);
@@ -500,12 +658,16 @@ export function CardListApp({
         pageSize: String(CATALOG_PAGE_SIZE),
       });
 
+      if (nextSeriesName) {
+        query.set("seriesName", nextSeriesName);
+      }
+
       if (nextSet) {
         query.set("setId", String(nextSet.id));
       }
 
       if (nextRarity) {
-        const selectedRarityMeta = rarityOptions.find(
+        const selectedRarityMeta = raritySourceOptions.find(
           (rarityMeta) => rarityMeta.filterKey === nextRarity,
         );
 
@@ -531,6 +693,13 @@ export function CardListApp({
       setCatalogPage(result.data.page);
       setCatalogTotalPages(result.data.totalPages);
       setCatalogTotalCount(result.data.totalCount);
+
+      const nextRarityOptions = await loadRarityOptions({
+        query: catalogQuery,
+        seriesName: nextSeriesName,
+        setId: nextSet?.id,
+      });
+      setSelectedRarity(resolveSelectedRarityWithOptions(nextRarityOptions, nextRarity));
     } catch (error) {
       setCatalogError(error instanceof Error ? error.message : "카드 검색에 실패했습니다.");
     } finally {
@@ -545,14 +714,24 @@ export function CardListApp({
     setSetOptions([]);
     setSetError(null);
     resetCatalogResults();
-    const globalRarityOptions = await loadRarityOptions();
-    syncSelectedRarityWithOptions(globalRarityOptions);
+    const nextRarityOptions = await loadRarityOptions({
+      query: catalogQuery,
+      seriesName: nextSeriesName || undefined,
+    });
+    const nextRarity = resolveSelectedRarityWithOptions(nextRarityOptions, selectedRarity);
+    setSelectedRarity(nextRarity);
 
-    if (!nextSeriesName) {
-      return;
+    if (nextSeriesName) {
+      await loadSeriesSets(nextSeriesName);
     }
 
-    await loadSeriesSets(nextSeriesName);
+    void searchCatalog(
+      1,
+      nextSeriesName || undefined,
+      null,
+      nextRarity,
+      nextRarityOptions ?? rarityOptions,
+    );
   }
 
   async function handleSetChange(nextSetId: string) {
@@ -560,8 +739,19 @@ export function CardListApp({
       setSelectedSet(null);
       setSelectedMaster(null);
       resetCatalogResults();
-      const globalRarityOptions = await loadRarityOptions();
-      syncSelectedRarityWithOptions(globalRarityOptions);
+      const nextRarityOptions = await loadRarityOptions({
+        query: catalogQuery,
+        seriesName: selectedSeriesName || undefined,
+      });
+      const nextRarity = resolveSelectedRarityWithOptions(nextRarityOptions, selectedRarity);
+      setSelectedRarity(nextRarity);
+      void searchCatalog(
+        1,
+        selectedSeriesName || undefined,
+        null,
+        nextRarity,
+        nextRarityOptions ?? rarityOptions,
+      );
       return;
     }
 
@@ -575,35 +765,49 @@ export function CardListApp({
     setSetError(null);
     setSelectedSet(nextSet);
     setSelectedMaster(null);
-    const nextRarityOptions = await loadRarityOptions(nextSet.id);
-    const nextRarity = syncSelectedRarityWithOptions(nextRarityOptions) || undefined;
-    void searchCatalog(1, nextSet, nextRarity);
+    const nextRarityOptions = await loadRarityOptions({
+      query: catalogQuery,
+      seriesName: selectedSeriesName || undefined,
+      setId: nextSet.id,
+    });
+    const nextRarity = resolveSelectedRarityWithOptions(nextRarityOptions, selectedRarity);
+    setSelectedRarity(nextRarity);
+    void searchCatalog(
+      1,
+      selectedSeriesName || undefined,
+      nextSet,
+      nextRarity,
+      nextRarityOptions ?? rarityOptions,
+    );
   }
 
-  function handleRarityChange(nextRarity: string) {
+  async function handleRarityChange(nextRarity: string) {
     setSelectedRarity(nextRarity);
     setSelectedMaster(null);
     resetCatalogResults();
 
-    if (selectedSeriesName && !selectedSet) {
-      return;
-    }
+    const nextRarityOptions = await loadRarityOptions({
+      query: catalogQuery,
+      seriesName: selectedSeriesName || undefined,
+      setId: selectedSet?.id,
+    });
 
-    void searchCatalog(1, selectedSet, nextRarity || undefined);
+    void searchCatalog(
+      1,
+      selectedSeriesName || undefined,
+      selectedSet,
+      nextRarity,
+      nextRarityOptions ?? rarityOptions,
+    );
   }
 
   function handleCatalogSearch(page = 1) {
-    if (selectedSeriesName && !selectedSet) {
-      setCatalogError("시리즈를 선택했다면 세트도 함께 골라 주세요.");
-      return;
-    }
-
     if (page !== catalogPage) {
       pendingCatalogScrollRef.current = true;
       scrollToCatalogTop();
     }
 
-    void searchCatalog(page);
+    void searchCatalog(page, selectedSeriesName || undefined, selectedSet, selectedRarity, rarityOptions);
   }
 
   async function submitToApi(
@@ -726,8 +930,9 @@ export function CardListApp({
         throw new Error(result.error ?? "삭제 처리에 실패했습니다.");
       }
 
-      setCards((current) => current.filter((item) => item.id !== card.id));
+        setCards((current) => current.filter((item) => item.id !== card.id));
       setEditingCard((current) => (current?.id === card.id ? null : current));
+      setInspectCard((current) => (current?.id === card.id ? null : current));
       setSuccessMessage("내 카드에서 삭제했습니다.");
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "삭제 처리에 실패했습니다.");
@@ -823,7 +1028,7 @@ export function CardListApp({
               pageSize={CATALOG_PAGE_SIZE}
               totalPages={catalogTotalPages}
               totalCount={catalogTotalCount}
-              searchDisabled={Boolean(selectedSeriesName) && !selectedSet}
+              searchDisabled={false}
               selectionEnabled={canManageActiveCollection}
               selectionDisabledReason={getWriteBlockedMessage()}
               onQueryChange={setCatalogQuery}
@@ -845,6 +1050,7 @@ export function CardListApp({
 
                 setSelectedMaster(card);
                 setEditingCard(null);
+                setInspectCard(null);
                 setSubmitError(null);
                 setSuccessMessage(null);
               }}
@@ -885,20 +1091,42 @@ export function CardListApp({
 
                 <div className="form-dialog-layout">
                   <div className="form-dialog-preview">
-                    <div className="form-dialog-image">
-                      {getMasterPreviewImageSrc(selectedMaster) ? (
-                        <>
-                          {/* External master images can come from multiple hosts. */}
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={getMasterPreviewImageSrc(selectedMaster) ?? ""}
-                            alt={selectedMaster.cardNameKo}
-                          />
-                        </>
-                      ) : (
-                        <div className="catalog-card-fallback">NO IMAGE</div>
-                      )}
-                    </div>
+                    <button
+                      className="form-dialog-image-button"
+                      type="button"
+                      onClick={() => {
+                        const imageSrc =
+                          selectedMaster.imageUrl ?? getMasterPreviewImageSrc(selectedMaster);
+
+                        if (!imageSrc) {
+                          return;
+                        }
+
+                        setLightboxState({
+                          imageSrc,
+                          alt: selectedMaster.cardNameKo,
+                          title: selectedMaster.cardNameKo,
+                          subtitle: `${selectedMaster.set.setNameKo} · ${selectedMaster.cardNo}`,
+                        });
+                      }}
+                      disabled={!getMasterPreviewImageSrc(selectedMaster)}
+                      aria-label={`${selectedMaster.cardNameKo} 이미지 크게 보기`}
+                    >
+                      <div className="form-dialog-image">
+                        {getMasterPreviewImageSrc(selectedMaster) ? (
+                          <>
+                            {/* External master images can come from multiple hosts. */}
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={getMasterPreviewImageSrc(selectedMaster) ?? ""}
+                              alt={selectedMaster.cardNameKo}
+                            />
+                          </>
+                        ) : (
+                          <div className="catalog-card-fallback">NO IMAGE</div>
+                        )}
+                      </div>
+                    </button>
 
                     <div className="catalog-card-meta form-dialog-meta">
                       <span>희귀도 {selectedMaster.rarity}</span>
@@ -907,8 +1135,8 @@ export function CardListApp({
                     </div>
 
                     <p className="form-dialog-copy">
-                      마스터 정보는 읽기 전용으로 유지되고, 여기서는 내 목록용 수량과 상태,
-                      메모만 저장합니다.
+                      이미지를 누르면 크게 볼 수 있습니다. 마스터 정보는 읽기 전용으로
+                      유지되고, 여기서는 내 목록용 수량과 상태, 메모만 저장합니다.
                     </p>
                   </div>
 
@@ -975,6 +1203,51 @@ export function CardListApp({
                     간단 보기
                   </button>
                 </div>
+                <div className="collection-filter-grid">
+                  <label className="checkbox-field">
+                    <input
+                      type="checkbox"
+                      checked={collectionOnlyMultiOwned}
+                      onChange={(event) => setCollectionOnlyMultiOwned(event.target.checked)}
+                    />
+                    <span>2개 이상만 보기</span>
+                  </label>
+
+                  <div className="field">
+                    <label htmlFor="collectionRarity">레어도</label>
+                    <select
+                      id="collectionRarity"
+                      value={selectedCollectionRarity}
+                      onChange={(event) => setSelectedCollectionRarity(event.target.value)}
+                      disabled={isLoadingRarities}
+                    >
+                      <option value="">
+                        {isLoadingRarities ? "레어도 불러오는 중..." : "전체 레어도"}
+                      </option>
+                      {rarityOptions.map((rarity) => (
+                        <option key={rarity.filterKey} value={rarity.filterKey}>
+                          {getRarityFilterLabel(rarity)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="collectionSetFilter">카드 세트</label>
+                    <select
+                      id="collectionSetFilter"
+                      value={selectedCollectionSet}
+                      onChange={(event) => setSelectedCollectionSet(event.target.value)}
+                    >
+                      <option value="">전체 카드 세트</option>
+                      {collectionSetOptions.map((option) => (
+                        <option key={option.key} value={option.key}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -992,7 +1265,7 @@ export function CardListApp({
                   ? "카드를 누르면 수정 창이 열립니다."
                   : "현재는 열람만 가능합니다."}
               </span>
-              <span>사진을 누르면 크게 볼 수 있습니다.</span>
+              <span>사진을 누르면 카드 상세 정보가 열립니다.</span>
             </div>
 
             <OwnedCardGrid
@@ -1011,10 +1284,18 @@ export function CardListApp({
               }
               missingUserMessage="카드 열람 탭에서 사용자 ID를 불러오면 카드 목록을 표시할 수 있습니다."
               viewMode={collectionViewMode}
-              selectedCardId={editingCard?.id ?? null}
+              selectedCardId={editingCard?.id ?? inspectCard?.id ?? null}
               pendingId={pendingDeleteId}
               onEdit={(card) => {
                 setEditingCard(card);
+                setSelectedMaster(null);
+                setInspectCard(null);
+                setSubmitError(null);
+                setSuccessMessage(null);
+              }}
+              onInspect={(card) => {
+                setInspectCard(card);
+                setEditingCard(null);
                 setSelectedMaster(null);
                 setSubmitError(null);
                 setSuccessMessage(null);
@@ -1022,6 +1303,38 @@ export function CardListApp({
               onDelete={handleDelete}
             />
           </section>
+
+          {inspectCard ? (
+            <OwnedCardDetailDialog
+              card={inspectCard}
+              editable={isCollectionMode && canManageActiveCollection}
+              onClose={() => {
+                setInspectCard(null);
+              }}
+              onOpenImage={() => {
+                const imageSrc = inspectCard.card.imageUrl ?? getOwnedPreviewImageSrc(inspectCard);
+
+                if (!imageSrc) {
+                  return;
+                }
+
+                setLightboxState({
+                  imageSrc,
+                  alt: inspectCard.card.cardNameKo,
+                  title: inspectCard.card.cardNameKo,
+                  subtitle: `${inspectCard.card.setNameKo} · ${inspectCard.card.cardNo}`,
+                });
+              }}
+              onEdit={
+                isCollectionMode && canManageActiveCollection
+                  ? () => {
+                      setEditingCard(inspectCard);
+                      setInspectCard(null);
+                    }
+                  : undefined
+              }
+            />
+          ) : null}
 
           {isCollectionMode && editingCard ? (
             <div
@@ -1057,20 +1370,41 @@ export function CardListApp({
 
                 <div className="form-dialog-layout">
                   <div className="form-dialog-preview">
-                    <div className="form-dialog-image">
-                      {getOwnedPreviewImageSrc(editingCard) ? (
-                        <>
-                          {/* External master images can come from multiple hosts. */}
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={getOwnedPreviewImageSrc(editingCard) ?? ""}
-                            alt={editingCard.card.cardNameKo}
-                          />
-                        </>
-                      ) : (
-                        <div className="catalog-card-fallback">NO IMAGE</div>
-                      )}
-                    </div>
+                    <button
+                      className="form-dialog-image-button"
+                      type="button"
+                      onClick={() => {
+                        const imageSrc = editingCard.card.imageUrl ?? getOwnedPreviewImageSrc(editingCard);
+
+                        if (!imageSrc) {
+                          return;
+                        }
+
+                        setLightboxState({
+                          imageSrc,
+                          alt: editingCard.card.cardNameKo,
+                          title: editingCard.card.cardNameKo,
+                          subtitle: `${editingCard.card.setNameKo} · ${editingCard.card.cardNo}`,
+                        });
+                      }}
+                      disabled={!getOwnedPreviewImageSrc(editingCard)}
+                      aria-label={`${editingCard.card.cardNameKo} 이미지 크게 보기`}
+                    >
+                      <div className="form-dialog-image">
+                        {getOwnedPreviewImageSrc(editingCard) ? (
+                          <>
+                            {/* External master images can come from multiple hosts. */}
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={getOwnedPreviewImageSrc(editingCard) ?? ""}
+                              alt={editingCard.card.cardNameKo}
+                            />
+                          </>
+                        ) : (
+                          <div className="catalog-card-fallback">NO IMAGE</div>
+                        )}
+                      </div>
+                    </button>
 
                     <div className="catalog-card-meta form-dialog-meta">
                       <span>보유 수량 {editingCard.quantity}</span>
@@ -1079,7 +1413,7 @@ export function CardListApp({
                     </div>
 
                     <p className="form-dialog-copy">
-                      저장된 내 카드 기록을 수정합니다. 카드 마스터 정보는 그대로 두고,
+                      이미지를 누르면 크게 볼 수 있습니다. 저장된 내 카드 기록을 수정하고,
                       수량과 상태, 메모, 구매일만 업데이트합니다.
                     </p>
                   </div>
@@ -1107,6 +1441,18 @@ export function CardListApp({
             </div>
           ) : null}
         </>
+      ) : null}
+
+      {lightboxState ? (
+        <ImageLightbox
+          alt={lightboxState.alt}
+          imageSrc={lightboxState.imageSrc}
+          title={lightboxState.title}
+          subtitle={lightboxState.subtitle}
+          onClose={() => {
+            setLightboxState(null);
+          }}
+        />
       ) : null}
     </section>
   );

@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import {
   CARD_CONDITION_LABELS,
   CARD_TYPE_LABELS,
@@ -18,6 +17,7 @@ type OwnedCardGridProps = {
   selectedCardId?: string | null;
   pendingId?: string | null;
   onEdit: (card: OwnedCardItem) => void;
+  onInspect: (card: OwnedCardItem) => void;
   onDelete: (card: OwnedCardItem) => void;
 };
 
@@ -47,27 +47,8 @@ export function OwnedCardGrid({
   pendingId,
   onDelete,
   onEdit,
+  onInspect,
 }: OwnedCardGridProps) {
-  const [previewCard, setPreviewCard] = useState<OwnedCardItem | null>(null);
-
-  useEffect(() => {
-    if (!previewCard) {
-      return;
-    }
-
-    function handleKeydown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setPreviewCard(null);
-      }
-    }
-
-    window.addEventListener("keydown", handleKeydown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeydown);
-    };
-  }, [previewCard]);
-
   if (!activeUserId) {
     return (
       <div className="empty-state">
@@ -128,9 +109,9 @@ export function OwnedCardGrid({
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        setPreviewCard(card);
+                        onInspect(card);
                       }}
-                      aria-label={`${card.card.cardNameKo} 이미지 크게 보기`}
+                      aria-label={`${card.card.cardNameKo} 상세 정보 보기`}
                     >
                       {/* External master thumbnails can come from multiple hosts. */}
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -180,9 +161,9 @@ export function OwnedCardGrid({
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        setPreviewCard(card);
+                        onInspect(card);
                       }}
-                      aria-label={`${card.card.cardNameKo} 이미지 크게 보기`}
+                      aria-label={`${card.card.cardNameKo} 상세 정보 보기`}
                     >
                       {/* External master thumbnails can come from multiple hosts. */}
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -258,42 +239,6 @@ export function OwnedCardGrid({
         })}
       </div>
 
-      {previewCard ? (
-        <div
-          className="image-lightbox"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`${previewCard.card.cardNameKo} 이미지 미리보기`}
-          onClick={() => setPreviewCard(null)}
-        >
-          <div className="image-lightbox-content" onClick={(event) => event.stopPropagation()}>
-            <div className="image-lightbox-header">
-              <div>
-                <strong>{previewCard.card.cardNameKo}</strong>
-                <span>
-                  {previewCard.card.setNameKo} · {previewCard.card.cardNo}
-                </span>
-              </div>
-              <button
-                className="btn btn-secondary"
-                type="button"
-                onClick={() => setPreviewCard(null)}
-              >
-                닫기
-              </button>
-            </div>
-
-            <div className="image-lightbox-body">
-              {/* External master images can come from multiple hosts. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={previewCard.card.imageUrl ?? getPreviewImageSrc(previewCard) ?? ""}
-                alt={previewCard.card.cardNameKo}
-              />
-            </div>
-          </div>
-        </div>
-      ) : null}
     </>
   );
 }

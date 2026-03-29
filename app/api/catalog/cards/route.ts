@@ -7,12 +7,14 @@ export async function GET(request: Request) {
     const query = searchParams.get("q") ?? "";
     const page = searchParams.get("page") ?? "1";
     const pageSize = searchParams.get("pageSize") ?? "10";
+    const seriesName = searchParams.get("seriesName") ?? "";
     const setId = searchParams.get("setId");
     const rarities = searchParams.getAll("rarity").filter(Boolean);
     const cards = await searchCatalogCards({
       query,
       page: Number(page),
       pageSize: Number(pageSize),
+      seriesName: seriesName || undefined,
       setId: setId ? Number(setId) : undefined,
       rarities: rarities.length > 0 ? rarities : undefined,
     });

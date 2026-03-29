@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useDeferredValue, useState } from "react";
 import {
   CARD_TYPE_LABELS,
   type CardMaster,
@@ -53,6 +53,29 @@ function getRarityLabel(rarity: CardRarityMeta) {
   return rarity.rarityCode ?? rarity.displayNameKo ?? rarity.displayNameEn ?? rarity.rarityName;
 }
 
+function matchesResultFilter(card: CardMaster, query: string) {
+  if (!query.trim()) {
+    return true;
+  }
+
+  const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
+  const searchable = [
+    card.cardNameKo,
+    card.cardNameEn ?? "",
+    card.cardNameJp ?? "",
+    card.set.setNameKo,
+    card.set.setNameEn ?? "",
+    card.cardNo,
+    card.localCode ?? "",
+    card.rarity,
+    CARD_TYPE_LABELS[card.cardType],
+  ]
+    .join(" ")
+    .toLocaleLowerCase("ko-KR");
+
+  return searchable.includes(normalizedQuery);
+}
+
 export function CatalogSearchPanel({
   query,
   pending,
@@ -88,25 +111,9 @@ export function CatalogSearchPanel({
   onRarityChange,
   onSelect,
 }: CatalogSearchPanelProps) {
-  const [previewCard, setPreviewCard] = useState<CardMaster | null>(null);
-
-  useEffect(() => {
-    if (!previewCard) {
-      return;
-    }
-
-    function handleKeydown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setPreviewCard(null);
-      }
-    }
-
-    window.addEventListener("keydown", handleKeydown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeydown);
-    };
-  }, [previewCard]);
+  const [resultFilter, setResultFilter] = useState("");
+  const deferredResultFilter = useDeferredValue(resultFilter);
+  const visibleResults = results.filter((card) => matchesResultFilter(card, deferredResultFilter));
 
   return (
     <>
@@ -128,6 +135,14 @@ export function CatalogSearchPanel({
           <input
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || pending || searchDisabled) {
+                return;
+              }
+
+              event.preventDefault();
+              onSearch();
+            }}
             placeholder="예: 피카츄, 012/106, sv5k"
             disabled={pending}
           />
@@ -211,8 +226,8 @@ export function CatalogSearchPanel({
           {rarityError ? <div className="alert alert-error">{rarityError}</div> : null}
 
           <div className="filter-help">
-            시리즈를 먼저 고른 뒤 세트를 선택하면 해당 세트 카드만 페이지당 {pageSize}개씩 볼 수 있고,
-            레어도도 함께 좁혀서 볼 수 있습니다.
+            시리즈만 골라도 해당 시리즈 카드만 볼 수 있고, 세트까지 선택하면 더 좁혀집니다.
+            레어도는 현재 검색 조건에 맞는 카드들 기준으로 다시 계산됩니다.
           </div>
         </div>
 
@@ -245,20 +260,43 @@ export function CatalogSearchPanel({
           </div>
         ) : (
           <div className="results-shell">
+            <div className="results-filter-bar">
+              <input
+                value={resultFilter}
+                onChange={(event) => setResultFilter(event.target.value)}
+                placeholder="현재 불러온 결과 안에서 카드명, 세트, 번호, 레어도 필터"
+              />
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => setResultFilter("")}
+                disabled={!resultFilter}
+              >
+                초기화
+              </button>
+            </div>
+
             <div className="results-meta">
               <span>
-                총 {totalCount}개 중 {results.length}개 표시
+                총 {totalCount}개 중 현재 페이지 {results.length}개 불러옴
               </span>
+              <span>결과 내 필터 적용 후 {visibleResults.length}개 표시</span>
               <span>
                 {page} / {totalPages} 페이지
               </span>
               <span>페이지당 {pageSize}개</span>
-              <span>카드 본문을 누르면 추가 창이 열립니다.</span>
-              <span>사진을 누르면 크게 볼 수 있습니다.</span>
+              <span>카드나 사진을 누르면 추가 창이 열립니다.</span>
             </div>
 
-            <div className={`catalog-grid ${viewMode === "compact" ? "catalog-grid-compact" : ""}`}>
-              {results.map((card) => {
+            {visibleResults.length === 0 ? (
+              <div className="empty-state">
+                현재 불러온 검색 결과 안에서 조건에 맞는 카드가 없습니다.
+                <br />
+                결과 내 필터를 지우거나 페이지를 바꿔서 다시 확인해 보세요.
+              </div>
+            ) : (
+              <div className={`catalog-grid ${viewMode === "compact" ? "catalog-grid-compact" : ""}`}>
+                {visibleResults.map((card) => {
                 const previewImageSrc = getPreviewImageSrc(card);
                 const isSelected = selectedCardId === card.id;
 
@@ -293,9 +331,9 @@ export function CatalogSearchPanel({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              setPreviewCard(card);
+                              onSelect(card);
                             }}
-                            aria-label={`${card.cardNameKo} 이미지 크게 보기`}
+                            aria-label={`${card.cardNameKo} 카드 추가 창 열기`}
                           >
                             {/* External master thumbnails can come from multiple hosts. */}
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -318,86 +356,87 @@ export function CatalogSearchPanel({
                       </div>
                     </article>
                   );
-                }
+                  }
 
-                return (
-                  <article
-                    className={`catalog-card ${selectionEnabled ? "catalog-card-interactive" : "catalog-card-readonly"} ${isSelected ? "catalog-card-selected" : ""}`}
-                    key={card.id}
-                    role={selectionEnabled ? "button" : undefined}
-                    tabIndex={selectionEnabled ? 0 : undefined}
-                    onClick={() => {
-                      if (selectionEnabled) {
-                        onSelect(card);
-                      }
-                    }}
-                    onKeyDown={(event) => {
-                      if (!selectionEnabled) {
-                        return;
-                      }
+                  return (
+                    <article
+                      className={`catalog-card ${selectionEnabled ? "catalog-card-interactive" : "catalog-card-readonly"} ${isSelected ? "catalog-card-selected" : ""}`}
+                      key={card.id}
+                      role={selectionEnabled ? "button" : undefined}
+                      tabIndex={selectionEnabled ? 0 : undefined}
+                      onClick={() => {
+                        if (selectionEnabled) {
+                          onSelect(card);
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (!selectionEnabled) {
+                          return;
+                        }
 
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        onSelect(card);
-                      }
-                    }}
-                    aria-label={`${card.cardNameKo} 카드 추가 창 열기`}
-                  >
-                    <div className="catalog-card-media">
-                      {previewImageSrc ? (
-                        <button
-                          className="catalog-card-image-button"
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setPreviewCard(card);
-                          }}
-                          aria-label={`${card.cardNameKo} 이미지 크게 보기`}
-                        >
-                          {/* External master thumbnails can come from multiple hosts. */}
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={previewImageSrc} alt={card.cardNameKo} />
-                        </button>
-                      ) : (
-                        <div className="catalog-card-fallback">NO IMAGE</div>
-                      )}
-                    </div>
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onSelect(card);
+                        }
+                      }}
+                      aria-label={`${card.cardNameKo} 카드 추가 창 열기`}
+                    >
+                      <div className="catalog-card-media">
+                        {previewImageSrc ? (
+                          <button
+                            className="catalog-card-image-button"
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onSelect(card);
+                            }}
+                            aria-label={`${card.cardNameKo} 카드 추가 창 열기`}
+                          >
+                            {/* External master thumbnails can come from multiple hosts. */}
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={previewImageSrc} alt={card.cardNameKo} />
+                          </button>
+                        ) : (
+                          <div className="catalog-card-fallback">NO IMAGE</div>
+                        )}
+                      </div>
 
-                    <div className="catalog-card-body">
-                      <div className="catalog-card-header">
-                        <div>
-                          <h3>{card.cardNameKo}</h3>
-                          <p>{card.set.setNameKo}</p>
+                      <div className="catalog-card-body">
+                        <div className="catalog-card-header">
+                          <div>
+                            <h3>{card.cardNameKo}</h3>
+                            <p>{card.set.setNameKo}</p>
+                          </div>
+                          {isSelected ? <span className="status-pill">추가 창 열림</span> : null}
                         </div>
-                        {isSelected ? <span className="status-pill">추가 창 열림</span> : null}
-                      </div>
 
-                      <div className="catalog-card-meta">
-                        <span>번호 {card.cardNo}</span>
-                        <span>희귀도 {card.rarity}</span>
-                        <span>유형 {CARD_TYPE_LABELS[card.cardType]}</span>
-                        <span>로컬 코드 {card.localCode ?? "없음"}</span>
-                      </div>
+                        <div className="catalog-card-meta">
+                          <span>번호 {card.cardNo}</span>
+                          <span>희귀도 {card.rarity}</span>
+                          <span>유형 {CARD_TYPE_LABELS[card.cardType]}</span>
+                          <span>로컬 코드 {card.localCode ?? "없음"}</span>
+                        </div>
 
-                      <div className="catalog-card-action">
-                        <strong>
-                          {selectionEnabled
-                            ? isSelected
-                              ? "모달이 열려 있습니다"
-                              : "카드를 눌러 추가"
-                            : "현재는 읽기 전용"}
-                        </strong>
-                        <span>
-                          {selectionEnabled
-                            ? "수량, 상태, 메모를 바로 입력할 수 있습니다."
-                            : selectionDisabledReason ?? "로그인한 본인 목록에서만 추가할 수 있습니다."}
-                        </span>
+                        <div className="catalog-card-action">
+                          <strong>
+                            {selectionEnabled
+                              ? isSelected
+                                ? "모달이 열려 있습니다"
+                                : "카드를 눌러 추가"
+                              : "현재는 읽기 전용"}
+                          </strong>
+                          <span>
+                            {selectionEnabled
+                              ? "수량, 상태, 메모를 바로 입력할 수 있습니다."
+                              : selectionDisabledReason ?? "로그인한 본인 목록에서만 추가할 수 있습니다."}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
 
             {totalPages > 1 ? (
               <div className="pagination">
@@ -427,42 +466,6 @@ export function CatalogSearchPanel({
         )}
       </div>
 
-      {previewCard ? (
-        <div
-          className="image-lightbox"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`${previewCard.cardNameKo} 이미지 미리보기`}
-          onClick={() => setPreviewCard(null)}
-        >
-          <div className="image-lightbox-content" onClick={(event) => event.stopPropagation()}>
-            <div className="image-lightbox-header">
-              <div>
-                <strong>{previewCard.cardNameKo}</strong>
-                <span>
-                  {previewCard.set.setNameKo} · {previewCard.cardNo}
-                </span>
-              </div>
-              <button
-                className="btn btn-secondary"
-                type="button"
-                onClick={() => setPreviewCard(null)}
-              >
-                닫기
-              </button>
-            </div>
-
-            <div className="image-lightbox-body">
-              {/* External master images can come from multiple hosts. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={previewCard.imageUrl ?? getPreviewImageSrc(previewCard) ?? ""}
-                alt={previewCard.cardNameKo}
-              />
-            </div>
-          </div>
-        </div>
-      ) : null}
     </>
   );
 }
