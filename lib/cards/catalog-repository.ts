@@ -11,6 +11,10 @@ import type {
 type CardRarityMetaRow = Database["public"]["Tables"]["card_rarity_meta"]["Row"];
 type CardRow = Database["public"]["Tables"]["cards"]["Row"];
 type CardSetRow = Database["public"]["Tables"]["card_sets"]["Row"];
+type SearchRankingRow = Pick<
+  CardRow,
+  "id" | "card_no" | "local_code" | "card_name_ko" | "card_name_en" | "card_name_jp"
+>;
 type CatalogSearchRow = CardRow & {
   card_sets: CardSetRow | null;
 };
@@ -62,33 +66,95 @@ const SET_SELECT = `
   total_cards
 `;
 
+const SEARCH_RANKING_SELECT = `
+  id,
+  card_no,
+  local_code,
+  card_name_ko,
+  card_name_en,
+  card_name_jp
+`;
+
+const MASTER_SELECT_WITH_SERIES_JOIN = MASTER_SELECT.replace("card_sets (", "card_sets!inner (");
+const SEARCH_RANKING_SELECT_WITH_SERIES_JOIN = `
+  ${SEARCH_RANKING_SELECT},
+  card_sets!inner (
+    id
+  )
+`;
+const COUNT_SELECT_WITH_SERIES_JOIN = `
+  id,
+  card_sets!inner (
+    id
+  )
+`;
+const RARITY_VALUE_SELECT_WITH_SERIES_JOIN = `
+  id,
+  rarity,
+  card_sets!inner (
+    id
+  )
+`;
+const METADATA_CACHE_TTL_MS = 1000 * 60 * 5;
+
+class TimedCache<Key, Value> {
+  private readonly values = new Map<Key, { expiresAt: number; value: Value }>();
+  private readonly pending = new Map<Key, Promise<Value>>();
+
+  constructor(private readonly ttlMs: number) {}
+
+  async get(key: Key, loader: () => Promise<Value>) {
+    const now = Date.now();
+    const cached = this.values.get(key);
+
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+
+    const inflight = this.pending.get(key);
+
+    if (inflight) {
+      return inflight;
+    }
+
+    const pendingValue = loader()
+      .then((value) => {
+        this.values.set(key, {
+          value,
+          expiresAt: Date.now() + this.ttlMs,
+        });
+        this.pending.delete(key);
+
+        return value;
+      })
+      .catch((error) => {
+        this.pending.delete(key);
+        throw error;
+      });
+
+    this.pending.set(key, pendingValue);
+
+    return pendingValue;
+  }
+}
+
+const rarityMetaCache = new TimedCache<"all", CardRarityMeta[]>(METADATA_CACHE_TTL_MS);
+const seriesListCache = new TimedCache<"all", CardSeriesSummary[]>(METADATA_CACHE_TTL_MS);
+
 function sanitizeSearchTerm(query: string) {
   return query.trim().replace(/[,%()]/g, " ").replace(/\s+/g, " ").slice(0, 80);
 }
 
-async function resolveSeriesSetIds(seriesName: string) {
-  const supabase = createSupabaseAdminClient();
-  const { data, error } = await supabase
-    .from("card_sets")
-    .select("id")
-    .eq("game", "pokemon")
-    .eq("language", "ko")
-    .eq("is_active", true)
-    .eq("series_name", seriesName);
-
-  if (error) {
-    throw new Error(`카드 시리즈 세트 조회 실패: ${error.message}`);
-  }
-
-  return (data ?? []).map((row) => row.id);
+function usesSeriesJoin(seriesName?: string, setId?: number) {
+  return Boolean(seriesName && !setId);
 }
 
 async function listAllMatchingCardRarityValues({
-  seriesSetIds,
+  seriesName,
   setId,
   sanitizedQuery,
 }: {
-  seriesSetIds: number[] | null;
+  seriesName?: string;
   setId?: number;
   sanitizedQuery?: string;
 }) {
@@ -96,11 +162,12 @@ async function listAllMatchingCardRarityValues({
   const pageSize = 1000;
   let offset = 0;
   const rarityValues: string[] = [];
+  const useSeriesJoin = usesSeriesJoin(seriesName, setId);
 
   while (true) {
     let request = supabase
       .from("cards")
-      .select("id, rarity")
+      .select(useSeriesJoin ? RARITY_VALUE_SELECT_WITH_SERIES_JOIN : "id, rarity")
       .eq("game", "pokemon")
       .eq("language", "ko")
       .eq("is_active", true)
@@ -109,8 +176,8 @@ async function listAllMatchingCardRarityValues({
 
     if (setId) {
       request = request.eq("set_id", setId);
-    } else if (seriesSetIds) {
-      request = request.in("set_id", seriesSetIds);
+    } else if (seriesName) {
+      request = request.eq("card_sets.series_name", seriesName);
     }
 
     if (sanitizedQuery) {
@@ -132,7 +199,7 @@ async function listAllMatchingCardRarityValues({
       throw new Error(`카드 레어도 값 조회 실패: ${error.message}`);
     }
 
-    const rows = data ?? [];
+    const rows = (data ?? []) as unknown as Array<{ id: number; rarity: string | null }>;
 
     rarityValues.push(
       ...rows
@@ -192,7 +259,7 @@ function rarityMetaMatchesValue(rarity: CardRarityMeta, value: string) {
   );
 }
 
-function getQueryScore(row: CatalogSearchRow, query: string) {
+function getQueryScore(row: SearchRankingRow, query: string) {
   if (!query) {
     return 0;
   }
@@ -263,7 +330,7 @@ function getQueryScore(row: CatalogSearchRow, query: string) {
   return 9;
 }
 
-function compareRankedRows(left: CatalogSearchRow, right: CatalogSearchRow, query: string) {
+function compareRankedRows(left: SearchRankingRow, right: SearchRankingRow, query: string) {
   const scoreDiff = getQueryScore(left, query) - getQueryScore(right, query);
 
   if (scoreDiff !== 0) {
@@ -396,88 +463,95 @@ function groupRarityMetas(rows: CardRarityMeta[]) {
 
 export class CatalogRepository {
   async listCardRarityMeta() {
-    const supabase = createSupabaseAdminClient();
-    const { data, error } = await supabase
-      .from("card_rarity_meta")
-      .select("rarity_name, rarity_code, display_name_ko, display_name_en, sort_order, badge_tone")
-      .order("sort_order", { ascending: true, nullsFirst: false })
-      .order("display_name_ko", { ascending: true, nullsFirst: false })
-      .order("rarity_name", { ascending: true });
+    return rarityMetaCache.get("all", async () => {
+      const supabase = createSupabaseAdminClient();
+      const { data, error } = await supabase
+        .from("card_rarity_meta")
+        .select(
+          "rarity_name, rarity_code, display_name_ko, display_name_en, sort_order, badge_tone",
+        )
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("display_name_ko", { ascending: true, nullsFirst: false })
+        .order("rarity_name", { ascending: true });
 
-    if (error) {
-      throw new Error(`카드 레어도 메타 조회 실패: ${error.message}`);
-    }
+      if (error) {
+        throw new Error(`카드 레어도 메타 조회 실패: ${error.message}`);
+      }
 
-    return groupRarityMetas((data as CardRarityMetaRow[]).map(mapRarityMetaRow));
+      return groupRarityMetas((data as CardRarityMetaRow[]).map(mapRarityMetaRow));
+    });
   }
 
   async listCardSeries(limit: number) {
-    const supabase = createSupabaseAdminClient();
-    const { data, error } = await supabase
-      .from("card_sets")
-      .select("series_name, release_date")
-      .eq("game", "pokemon")
-      .eq("language", "ko")
-      .eq("is_active", true)
-      .not("series_name", "is", null)
-      .limit(5000);
+    const series = await seriesListCache.get("all", async () => {
+      const supabase = createSupabaseAdminClient();
+      const { data, error } = await supabase
+        .from("card_sets")
+        .select("series_name, release_date")
+        .eq("game", "pokemon")
+        .eq("language", "ko")
+        .eq("is_active", true)
+        .not("series_name", "is", null)
+        .limit(5000);
 
-    if (error) {
-      throw new Error(`카드 시리즈 조회 실패: ${error.message}`);
-    }
-
-    const seriesStats = new Map<string, { setCount: number; latestReleaseDate: string | null }>();
-
-    for (const row of data ?? []) {
-      const seriesName = row.series_name;
-
-      if (!seriesName) {
-        continue;
+      if (error) {
+        throw new Error(`카드 시리즈 조회 실패: ${error.message}`);
       }
 
-      const current = seriesStats.get(seriesName) ?? {
-        setCount: 0,
-        latestReleaseDate: null,
-      };
-      const nextReleaseDate =
-        current.latestReleaseDate && row.release_date
-          ? current.latestReleaseDate > row.release_date
-            ? current.latestReleaseDate
-            : row.release_date
-          : current.latestReleaseDate ?? row.release_date;
+      const seriesStats = new Map<string, { setCount: number; latestReleaseDate: string | null }>();
 
-      seriesStats.set(seriesName, {
-        setCount: current.setCount + 1,
-        latestReleaseDate: nextReleaseDate ?? null,
-      });
-    }
+      for (const row of data ?? []) {
+        const seriesName = row.series_name;
 
-    return [...seriesStats.entries()]
-      .map(
-        ([name, stats]): CardSeriesSummary => ({
-          name,
-          setCount: stats.setCount,
-        }),
-      )
-      .sort((left, right) => {
-        const leftLatest = seriesStats.get(left.name)?.latestReleaseDate;
-        const rightLatest = seriesStats.get(right.name)?.latestReleaseDate;
-
-        if (leftLatest && rightLatest && leftLatest !== rightLatest) {
-          return rightLatest.localeCompare(leftLatest, "ko-KR");
+        if (!seriesName) {
+          continue;
         }
 
-        if (leftLatest && !rightLatest) {
-          return -1;
-        }
+        const current = seriesStats.get(seriesName) ?? {
+          setCount: 0,
+          latestReleaseDate: null,
+        };
+        const nextReleaseDate =
+          current.latestReleaseDate && row.release_date
+            ? current.latestReleaseDate > row.release_date
+              ? current.latestReleaseDate
+              : row.release_date
+            : current.latestReleaseDate ?? row.release_date;
 
-        if (!leftLatest && rightLatest) {
-          return 1;
-        }
+        seriesStats.set(seriesName, {
+          setCount: current.setCount + 1,
+          latestReleaseDate: nextReleaseDate ?? null,
+        });
+      }
 
-        return left.name.localeCompare(right.name, "ko-KR");
-      })
-      .slice(0, limit);
+      return [...seriesStats.entries()]
+        .map(
+          ([name, stats]): CardSeriesSummary => ({
+            name,
+            setCount: stats.setCount,
+          }),
+        )
+        .sort((left, right) => {
+          const leftLatest = seriesStats.get(left.name)?.latestReleaseDate;
+          const rightLatest = seriesStats.get(right.name)?.latestReleaseDate;
+
+          if (leftLatest && rightLatest && leftLatest !== rightLatest) {
+            return rightLatest.localeCompare(leftLatest, "ko-KR");
+          }
+
+          if (leftLatest && !rightLatest) {
+            return -1;
+          }
+
+          if (!leftLatest && rightLatest) {
+            return 1;
+          }
+
+          return left.name.localeCompare(right.name, "ko-KR");
+        });
+    });
+
+    return series.slice(0, limit);
   }
 
   async searchCardSets(seriesName: string | undefined, limit: number) {
@@ -515,46 +589,28 @@ export class CatalogRepository {
     seriesName?: string;
     setId?: number;
   }) {
-    const supabase = createSupabaseAdminClient();
     const sanitizedQuery = sanitizeSearchTerm(query ?? "");
-    const seriesSetIds = seriesName ? await resolveSeriesSetIds(seriesName) : null;
 
     if (!sanitizedQuery && !seriesName && !setId) {
       return this.listCardRarityMeta();
     }
 
-    if (seriesName && !setId && seriesSetIds && seriesSetIds.length === 0) {
-      return [];
-    }
-
-    const [rarityValues, { data, error }] =
+    const [rarityValues, grouped] =
       await Promise.all([
         listAllMatchingCardRarityValues({
-          seriesSetIds,
+          seriesName,
           setId,
           sanitizedQuery,
         }),
-        supabase
-          .from("card_rarity_meta")
-          .select(
-            "rarity_name, rarity_code, display_name_ko, display_name_en, sort_order, badge_tone",
-          )
-          .order("sort_order", { ascending: true, nullsFirst: false })
-          .order("display_name_ko", { ascending: true, nullsFirst: false })
-          .order("rarity_name", { ascending: true }),
+        this.listCardRarityMeta(),
       ]);
-
-    if (error) {
-      throw new Error(`카드 레어도 메타 조회 실패: ${error.message}`);
-    }
 
     const availableRarityValues = new Set(
       rarityValues.filter((value): value is string => Boolean(value)),
     );
-    const grouped = groupRarityMetas((data as CardRarityMetaRow[]).map(mapRarityMetaRow));
 
     if (availableRarityValues.size === 0) {
-      return grouped;
+      return sanitizedQuery || seriesName || setId ? [] : grouped;
     }
 
     return grouped.filter((rarity) =>
@@ -579,17 +635,7 @@ export class CatalogRepository {
   }): Promise<PaginatedResult<CardMaster>> {
     const supabase = createSupabaseAdminClient();
     const sanitizedQuery = sanitizeSearchTerm(query);
-    const seriesSetIds = seriesName ? await resolveSeriesSetIds(seriesName) : null;
-
-    if (seriesName && !setId && seriesSetIds && seriesSetIds.length === 0) {
-      return {
-        items: [],
-        page: 1,
-        pageSize,
-        totalCount: 0,
-        totalPages: 1,
-      };
-    }
+    const useSeriesJoin = usesSeriesJoin(seriesName, setId);
 
     const applyCommonFilters = <T>(request: T) => {
       let nextRequest = (request as any)
@@ -599,8 +645,8 @@ export class CatalogRepository {
 
       if (setId) {
         nextRequest = nextRequest.eq("set_id", setId);
-      } else if (seriesSetIds) {
-        nextRequest = nextRequest.in("set_id", seriesSetIds);
+      } else if (seriesName) {
+        nextRequest = nextRequest.eq("card_sets.series_name", seriesName);
       }
 
       if (rarities && rarities.length > 1) {
@@ -627,12 +673,24 @@ export class CatalogRepository {
 
     const buildCountRequest = () =>
       applyCommonFilters(
-        supabase.from("cards").select("id", { count: "exact", head: true }),
+        supabase
+          .from("cards")
+          .select(useSeriesJoin ? COUNT_SELECT_WITH_SERIES_JOIN : "id", {
+            count: "estimated",
+            head: true,
+          }),
       );
 
     const buildDataRequest = () =>
       applyCommonFilters(
-        supabase.from("cards").select(MASTER_SELECT),
+        supabase.from("cards").select(useSeriesJoin ? MASTER_SELECT_WITH_SERIES_JOIN : MASTER_SELECT),
+      );
+
+    const buildRankingRequest = () =>
+      applyCommonFilters(
+        supabase
+          .from("cards")
+          .select(useSeriesJoin ? SEARCH_RANKING_SELECT_WITH_SERIES_JOIN : SEARCH_RANKING_SELECT),
       );
 
     const { count, error: countError } = await buildCountRequest();
@@ -644,61 +702,75 @@ export class CatalogRepository {
     const totalCount = count ?? 0;
     const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
     const safePage = Math.min(page, totalPages);
+
+    if (!sanitizedQuery) {
+      const startIndex = (safePage - 1) * pageSize;
+      const endIndex = startIndex + pageSize - 1;
+      const { data, error } = await buildDataRequest()
+        .order("card_sets(release_date)", { ascending: false, nullsFirst: false })
+        .order("card_sets(set_name_ko)", { ascending: true })
+        .order("card_no", {
+          ascending: true,
+        })
+        .range(startIndex, endIndex);
+
+      if (error) {
+        throw new Error(`카드 마스터 조회 실패: ${error.message}`);
+      }
+
+      return {
+        items: (data as CatalogSearchRow[]).map(mapRowToMaster),
+        page: safePage,
+        pageSize,
+        totalCount,
+        totalPages,
+      };
+    }
+
     const candidateLimit = Math.min(
-      Math.max(totalCount, safePage * pageSize * 20, 120),
+      Math.max(safePage * pageSize * 20, 120),
       1000,
     );
 
-    let request = buildDataRequest();
+    const { data: rankingData, error: rankingError } = await buildRankingRequest()
+      .order("updated_at", { ascending: false })
+      .limit(candidateLimit);
 
-    if (sanitizedQuery) {
-      request = request.order("updated_at", { ascending: false });
-    } else if (setId) {
-      request = request.order("card_no", {
-        ascending: true,
-      });
-    } else {
-      request = request.order("updated_at", { ascending: false });
+    if (rankingError) {
+      throw new Error(`카드 마스터 조회 실패: ${rankingError.message}`);
     }
-
-    request = request.limit(candidateLimit);
-
-    const { data, error } = await request;
-
-    if (error) {
-      throw new Error(`카드 마스터 조회 실패: ${error.message}`);
-    }
-
-    const rows = data as CatalogSearchRow[];
-    const rankedRows = sanitizedQuery
-      ? [...rows].sort((left, right) => compareRankedRows(left, right, sanitizedQuery))
-      : [...rows].sort((left, right) => {
-          const leftReleaseDate = left.card_sets?.release_date ?? "";
-          const rightReleaseDate = right.card_sets?.release_date ?? "";
-
-          if (leftReleaseDate !== rightReleaseDate) {
-            return rightReleaseDate.localeCompare(leftReleaseDate, "ko-KR");
-          }
-
-          const setNameCompare = (left.card_sets?.set_name_ko ?? "").localeCompare(
-            right.card_sets?.set_name_ko ?? "",
-            "ko-KR",
-          );
-
-          if (setNameCompare !== 0) {
-            return setNameCompare;
-          }
-
-          return (
-            left.card_no.localeCompare(right.card_no, "ko-KR", {
-              numeric: true,
-              sensitivity: "base",
-            }) || left.id - right.id
-          );
-        });
 
     const startIndex = (safePage - 1) * pageSize;
-    const items = rankedRows.slice(startIndex, startIndex + pageSize).map(mapRowToMaster);
+    const rankedRows = [...((rankingData as SearchRankingRow[]) ?? [])]
+      .sort((left, right) => compareRankedRows(left, right, sanitizedQuery));
+    const pageIds = rankedRows
+      .slice(startIndex, startIndex + pageSize)
+      .map((row) => row.id);
+
+    if (pageIds.length === 0) {
+      return {
+        items: [],
+        page: safePage,
+        pageSize,
+        totalCount,
+        totalPages,
+      };
+    }
+
+    const { data: pageData, error: pageError } = await supabase
+      .from("cards")
+      .select(MASTER_SELECT)
+      .in("id", pageIds);
+
+    if (pageError) {
+      throw new Error(`카드 마스터 조회 실패: ${pageError.message}`);
+    }
+
+    const rowsById = new Map((pageData as CatalogSearchRow[]).map((row) => [row.id, row]));
+    const items = pageIds
+      .map((id) => rowsById.get(id))
+      .filter((row): row is CatalogSearchRow => Boolean(row))
+      .map(mapRowToMaster);
 
     return {
       items,
