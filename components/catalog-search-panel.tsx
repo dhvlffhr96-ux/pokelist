@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useState, type RefObject } from "react";
 import {
   CARD_TYPE_LABELS,
   type CardMaster,
@@ -35,6 +35,7 @@ type CatalogSearchPanelProps = {
   searchDisabled: boolean;
   selectionEnabled: boolean;
   selectionDisabledReason?: string | null;
+  resultsAnchorRef?: RefObject<HTMLDivElement | null>;
   onQueryChange: (query: string) => void;
   onSearch: () => void;
   onPageChange: (page: number) => void;
@@ -102,6 +103,7 @@ export function CatalogSearchPanel({
   searchDisabled,
   selectionEnabled,
   selectionDisabledReason,
+  resultsAnchorRef,
   onQueryChange,
   onSearch,
   onPageChange,
@@ -132,20 +134,33 @@ export function CatalogSearchPanel({
         {error ? <div className="alert alert-error">{error}</div> : null}
 
         <div className="toolbar">
-          <input
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" || pending || searchDisabled) {
-                return;
-              }
+          <div className="input-with-clear">
+            <input
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" || pending || searchDisabled) {
+                  return;
+                }
 
-              event.preventDefault();
-              onSearch();
-            }}
-            placeholder="예: 피카츄, 012/106, sv5k"
-            disabled={pending}
-          />
+                event.preventDefault();
+                onSearch();
+              }}
+              placeholder="예: 피카츄, 012/106, sv5k"
+              disabled={pending}
+            />
+            {query ? (
+              <button
+                className="input-clear-button"
+                type="button"
+                onClick={() => onQueryChange("")}
+                aria-label="검색어 지우기"
+                disabled={pending}
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
           <button
             className="btn btn-primary"
             type="button"
@@ -259,7 +274,7 @@ export function CatalogSearchPanel({
             검색 버튼을 눌러 카드 마스터를 조회해 보세요.
           </div>
         ) : (
-          <div className="results-shell">
+          <div className="results-shell" ref={resultsAnchorRef}>
             <div className="results-filter-bar">
               <input
                 value={resultFilter}

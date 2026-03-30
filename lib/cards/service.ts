@@ -86,6 +86,10 @@ export async function listCatalogRarities(params?: {
   });
 }
 
+export async function listCatalogRarityMeta() {
+  return catalogRepository.listCardRarityMeta();
+}
+
 export async function listUserCollection(userId: string) {
   const normalizedUserId = userIdSchema.parse(userId);
   const existingCollection =

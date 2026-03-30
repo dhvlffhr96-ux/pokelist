@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { listCatalogRarities } from "@/lib/cards/service";
+import { listCatalogRarities, listCatalogRarityMeta } from "@/lib/cards/service";
 
 export async function GET(request: NextRequest) {
   try {
+    const scope = request.nextUrl.searchParams.get("scope") ?? "";
+
+    if (scope === "meta") {
+      const rarities = await listCatalogRarityMeta();
+
+      return NextResponse.json({ data: rarities });
+    }
+
     const query = request.nextUrl.searchParams.get("q") ?? "";
     const seriesName = request.nextUrl.searchParams.get("seriesName") ?? "";
     const setId = request.nextUrl.searchParams.get("setId");

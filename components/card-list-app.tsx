@@ -115,6 +115,61 @@ function getRarityFilterLabel(rarity: CardRarityMeta) {
   return rarity.rarityCode ?? rarity.displayNameKo ?? rarity.displayNameEn ?? rarity.rarityName;
 }
 
+function normalizeRarityValue(value: string | null | undefined) {
+  return (value ?? "").trim().toLocaleLowerCase("ko-KR").replace(/\s+/g, " ");
+}
+
+function compactRarityValue(value: string | null | undefined) {
+  return normalizeRarityValue(value).replace(/[^a-z0-9가-힣]+/g, "");
+}
+
+function normalizeRarityTokenOrder(value: string | null | undefined) {
+  return normalizeRarityValue(value)
+    .split(/[^a-z0-9가-힣]+/i)
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right, "ko-KR"))
+    .join(" ");
+}
+
+function findMatchingRarityMeta(rarityValue: string, rarityOptions: CardRarityMeta[]) {
+  const normalizedValue = normalizeRarityValue(rarityValue);
+  const compactValue = compactRarityValue(rarityValue);
+  const tokenOrderedValue = normalizeRarityTokenOrder(rarityValue);
+
+  return (
+    rarityOptions.find((rarityMeta) => {
+      const metaValues = [
+        rarityMeta.rarityName,
+        rarityMeta.rarityCode,
+        rarityMeta.displayNameKo,
+        rarityMeta.displayNameEn,
+      ];
+
+      return metaValues.some((value) => normalizeRarityValue(value) === normalizedValue);
+    }) ??
+    rarityOptions.find((rarityMeta) => {
+      const metaValues = [
+        rarityMeta.rarityName,
+        rarityMeta.rarityCode,
+        rarityMeta.displayNameKo,
+        rarityMeta.displayNameEn,
+      ];
+
+      return metaValues.some((value) => compactRarityValue(value) === compactValue);
+    }) ??
+    rarityOptions.find((rarityMeta) => {
+      const metaValues = [
+        rarityMeta.rarityName,
+        rarityMeta.rarityCode,
+        rarityMeta.displayNameKo,
+        rarityMeta.displayNameEn,
+      ];
+
+      return metaValues.some((value) => normalizeRarityTokenOrder(value) === tokenOrderedValue);
+    })
+  );
+}
+
 function getOwnedSetOptions(cards: OwnedCardItem[]) {
   const grouped = new Map<string, string>();
 
@@ -132,6 +187,62 @@ function getOwnedSetOptions(cards: OwnedCardItem[]) {
       label,
     }))
     .sort((left, right) => left.label.localeCompare(right.label, "ko-KR"));
+}
+
+function getOwnedRarityOptions(cards: OwnedCardItem[], rarityOptions: CardRarityMeta[]) {
+  const ownedRarities = [...new Set(
+    cards.map((card) => card.card.rarity?.trim()).filter((rarity): rarity is string => Boolean(rarity)),
+  )];
+
+  const grouped = new Map<
+    string,
+    {
+      filterKey: string;
+      filterValues: Set<string>;
+      label: string;
+      sortOrder: number;
+    }
+  >();
+  const rarityOrder = new Map(rarityOptions.map((rarity, index) => [rarity.filterKey, index]));
+
+  for (const rarityValue of ownedRarities) {
+    const matchedMeta = findMatchingRarityMeta(rarityValue, rarityOptions);
+
+    if (!matchedMeta) {
+      continue;
+    }
+
+    const existing = grouped.get(matchedMeta.filterKey);
+
+    if (existing) {
+      existing.filterValues.add(rarityValue);
+      for (const filterValue of matchedMeta.filterValues) {
+        existing.filterValues.add(filterValue);
+      }
+      continue;
+    }
+
+    grouped.set(matchedMeta.filterKey, {
+      filterKey: matchedMeta.filterKey,
+      filterValues: new Set([rarityValue, ...matchedMeta.filterValues]),
+      label: getRarityFilterLabel(matchedMeta),
+      sortOrder: rarityOrder.get(matchedMeta.filterKey) ?? Number.MAX_SAFE_INTEGER,
+    });
+  }
+
+  return [...grouped.values()]
+    .sort((left, right) => {
+      if (left.sortOrder !== right.sortOrder) {
+        return left.sortOrder - right.sortOrder;
+      }
+
+      return left.label.localeCompare(right.label, "ko-KR");
+    })
+    .map((rarity) => ({
+      filterKey: rarity.filterKey,
+      filterValues: [...rarity.filterValues],
+      label: rarity.label,
+    }));
 }
 
 function readStoredActiveUserId() {
@@ -155,6 +266,7 @@ export function CardListApp({
   hero,
 }: CardListAppProps) {
   const catalogPanelRef = useRef<HTMLElement | null>(null);
+  const catalogResultsRef = useRef<HTMLDivElement | null>(null);
   const pendingCatalogScrollRef = useRef(false);
   const hasRestoredUserRef = useRef(false);
   const autoLoadedSessionUserRef = useRef<string | null>(null);
@@ -209,13 +321,14 @@ export function CardListApp({
 
   const searchedCards = cards.filter((card) => matchesCollectionQuery(card, deferredQuery));
   const collectionSetOptions = getOwnedSetOptions(searchedCards);
+  const collectionRarityOptions = getOwnedRarityOptions(searchedCards, rarityOptions);
   const visibleCards = searchedCards.filter((card) => {
     if (collectionOnlyMultiOwned && card.quantity < 2) {
       return false;
     }
 
     if (selectedCollectionRarity) {
-      const selectedRarityMeta = rarityOptions.find(
+      const selectedRarityMeta = collectionRarityOptions.find(
         (rarityMeta) => rarityMeta.filterKey === selectedCollectionRarity,
       );
 
@@ -257,12 +370,17 @@ export function CardListApp({
     query?: string;
     seriesName?: string;
     setId?: number;
+    scope?: "meta";
   }) => {
     setIsLoadingRarities(true);
     setRarityError(null);
 
     try {
       const query = new URLSearchParams();
+
+      if (params?.scope === "meta") {
+        query.set("scope", "meta");
+      }
 
       if (params?.query?.trim()) {
         query.set("q", params.query.trim());
@@ -341,7 +459,9 @@ export function CardListApp({
     }
 
     void loadInitialFilters();
-    void loadRarityOptions();
+    void loadRarityOptions({
+      scope: "meta",
+    });
   }, [isCatalogMode, loadRarityOptions]);
 
   useEffect(() => {
@@ -349,7 +469,9 @@ export function CardListApp({
       return;
     }
 
-    void loadRarityOptions();
+    void loadRarityOptions({
+      scope: "meta",
+    });
   }, [isCollectionMode, isViewerMode, loadRarityOptions]);
 
   useEffect(() => {
@@ -385,11 +507,11 @@ export function CardListApp({
   useEffect(() => {
     if (
       selectedCollectionRarity &&
-      !rarityOptions.some((rarity) => rarity.filterKey === selectedCollectionRarity)
+      !collectionRarityOptions.some((rarity) => rarity.filterKey === selectedCollectionRarity)
     ) {
       setSelectedCollectionRarity("");
     }
-  }, [rarityOptions, selectedCollectionRarity]);
+  }, [collectionRarityOptions, selectedCollectionRarity]);
 
   useEffect(() => {
     if (
@@ -421,11 +543,13 @@ export function CardListApp({
   }
 
   function scrollToCatalogTop() {
-    if (!catalogPanelRef.current) {
+    const scrollTarget = catalogResultsRef.current ?? catalogPanelRef.current;
+
+    if (!scrollTarget) {
       return;
     }
 
-    const top = catalogPanelRef.current.getBoundingClientRect().top + window.scrollY - 88;
+    const top = scrollTarget.getBoundingClientRect().top + window.scrollY - 88;
 
     window.scrollTo({
       top: Math.max(top, 0),
@@ -1031,6 +1155,7 @@ export function CardListApp({
               searchDisabled={false}
               selectionEnabled={canManageActiveCollection}
               selectionDisabledReason={getWriteBlockedMessage()}
+              resultsAnchorRef={catalogResultsRef}
               onQueryChange={setCatalogQuery}
               onSearch={() => handleCatalogSearch(1)}
               onPageChange={handleCatalogSearch}
@@ -1178,11 +1303,23 @@ export function CardListApp({
                 </p>
               </div>
               <div className="collection-toolbar">
-                <input
-                  value={collectionQuery}
-                  onChange={(event) => setCollectionQuery(event.target.value)}
-                  placeholder="내 카드 검색"
-                />
+                <div className="input-with-clear">
+                  <input
+                    value={collectionQuery}
+                    onChange={(event) => setCollectionQuery(event.target.value)}
+                    placeholder="내 카드 검색"
+                  />
+                  {collectionQuery ? (
+                    <button
+                      className="input-clear-button"
+                      type="button"
+                      onClick={() => setCollectionQuery("")}
+                      aria-label="내 카드 검색어 지우기"
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </div>
                 <div className="view-switch" role="tablist" aria-label="내 카드 보기 방식">
                   <button
                     className={`view-switch-button ${collectionViewMode === "detail" ? "view-switch-button-active" : ""}`}
@@ -1224,9 +1361,9 @@ export function CardListApp({
                       <option value="">
                         {isLoadingRarities ? "레어도 불러오는 중..." : "전체 레어도"}
                       </option>
-                      {rarityOptions.map((rarity) => (
+                      {collectionRarityOptions.map((rarity) => (
                         <option key={rarity.filterKey} value={rarity.filterKey}>
-                          {getRarityFilterLabel(rarity)}
+                          {rarity.label}
                         </option>
                       ))}
                     </select>

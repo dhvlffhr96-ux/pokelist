@@ -83,12 +83,113 @@ async function resolveSeriesSetIds(seriesName: string) {
   return (data ?? []).map((row) => row.id);
 }
 
+async function listAllMatchingCardRarityValues({
+  seriesSetIds,
+  setId,
+  sanitizedQuery,
+}: {
+  seriesSetIds: number[] | null;
+  setId?: number;
+  sanitizedQuery?: string;
+}) {
+  const supabase = createSupabaseAdminClient();
+  const pageSize = 1000;
+  let offset = 0;
+  const rarityValues: string[] = [];
+
+  while (true) {
+    let request = supabase
+      .from("cards")
+      .select("id, rarity")
+      .eq("game", "pokemon")
+      .eq("language", "ko")
+      .eq("is_active", true)
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+
+    if (setId) {
+      request = request.eq("set_id", setId);
+    } else if (seriesSetIds) {
+      request = request.in("set_id", seriesSetIds);
+    }
+
+    if (sanitizedQuery) {
+      const like = `%${sanitizedQuery}%`;
+      request = request.or(
+        [
+          `card_name_ko.ilike.${like}`,
+          `card_name_en.ilike.${like}`,
+          `card_name_jp.ilike.${like}`,
+          `card_no.ilike.${like}`,
+          `local_code.ilike.${like}`,
+        ].join(","),
+      );
+    }
+
+    const { data, error } = await request;
+
+    if (error) {
+      throw new Error(`카드 레어도 값 조회 실패: ${error.message}`);
+    }
+
+    const rows = data ?? [];
+
+    rarityValues.push(
+      ...rows
+        .map((row) => row.rarity?.trim())
+        .filter((value): value is string => Boolean(value)),
+    );
+
+    if (rows.length < pageSize) {
+      break;
+    }
+
+    offset += pageSize;
+  }
+
+  return rarityValues;
+}
+
 function normalizeMatchText(value: string | null | undefined) {
   return (value ?? "").trim().toLocaleLowerCase("ko-KR");
 }
 
 function compactMatchText(value: string | null | undefined) {
   return normalizeMatchText(value).replace(/\s+/g, "");
+}
+
+function normalizeRarityValue(value: string | null | undefined) {
+  return (value ?? "").trim().toLocaleLowerCase("ko-KR").replace(/\s+/g, " ");
+}
+
+function compactRarityValue(value: string | null | undefined) {
+  return normalizeRarityValue(value).replace(/[^a-z0-9가-힣]+/g, "");
+}
+
+function normalizeRarityTokenOrder(value: string | null | undefined) {
+  return normalizeRarityValue(value)
+    .split(/[^a-z0-9가-힣]+/i)
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right, "ko-KR"))
+    .join(" ");
+}
+
+function rarityMetaMatchesValue(rarity: CardRarityMeta, value: string) {
+  const metaValues = [
+    rarity.rarityName,
+    rarity.rarityCode,
+    rarity.displayNameKo,
+    rarity.displayNameEn,
+  ];
+  const normalizedValue = normalizeRarityValue(value);
+  const compactValue = compactRarityValue(value);
+  const tokenOrderedValue = normalizeRarityTokenOrder(value);
+
+  return (
+    metaValues.some((metaValue) => normalizeRarityValue(metaValue) === normalizedValue) ||
+    metaValues.some((metaValue) => compactRarityValue(metaValue) === compactValue) ||
+    metaValues.some((metaValue) => normalizeRarityTokenOrder(metaValue) === tokenOrderedValue)
+  );
 }
 
 function getQueryScore(row: CatalogSearchRow, query: string) {
@@ -293,20 +394,23 @@ function groupRarityMetas(rows: CardRarityMeta[]) {
   return [...grouped.values()].sort(sortRarityMetas);
 }
 
-function createFallbackRarityMeta(value: string): CardRarityMeta {
-  return {
-    filterKey: value,
-    rarityName: value,
-    rarityCode: value,
-    displayNameKo: null,
-    displayNameEn: null,
-    sortOrder: null,
-    badgeTone: null,
-    filterValues: [value],
-  };
-}
-
 export class CatalogRepository {
+  async listCardRarityMeta() {
+    const supabase = createSupabaseAdminClient();
+    const { data, error } = await supabase
+      .from("card_rarity_meta")
+      .select("rarity_name, rarity_code, display_name_ko, display_name_en, sort_order, badge_tone")
+      .order("sort_order", { ascending: true, nullsFirst: false })
+      .order("display_name_ko", { ascending: true, nullsFirst: false })
+      .order("rarity_name", { ascending: true });
+
+    if (error) {
+      throw new Error(`카드 레어도 메타 조회 실패: ${error.message}`);
+    }
+
+    return groupRarityMetas((data as CardRarityMetaRow[]).map(mapRarityMetaRow));
+  }
+
   async listCardSeries(limit: number) {
     const supabase = createSupabaseAdminClient();
     const { data, error } = await supabase
@@ -415,39 +519,21 @@ export class CatalogRepository {
     const sanitizedQuery = sanitizeSearchTerm(query ?? "");
     const seriesSetIds = seriesName ? await resolveSeriesSetIds(seriesName) : null;
 
+    if (!sanitizedQuery && !seriesName && !setId) {
+      return this.listCardRarityMeta();
+    }
+
     if (seriesName && !setId && seriesSetIds && seriesSetIds.length === 0) {
       return [];
     }
 
-    let rarityValueRequest = supabase
-      .from("cards")
-      .select("rarity")
-      .eq("game", "pokemon")
-      .eq("language", "ko")
-      .eq("is_active", true);
-
-    if (setId) {
-      rarityValueRequest = rarityValueRequest.eq("set_id", setId);
-    } else if (seriesSetIds) {
-      rarityValueRequest = rarityValueRequest.in("set_id", seriesSetIds);
-    }
-
-    if (sanitizedQuery) {
-      const like = `%${sanitizedQuery}%`;
-      rarityValueRequest = rarityValueRequest.or(
-        [
-          `card_name_ko.ilike.${like}`,
-          `card_name_en.ilike.${like}`,
-          `card_name_jp.ilike.${like}`,
-          `card_no.ilike.${like}`,
-          `local_code.ilike.${like}`,
-        ].join(","),
-      );
-    }
-
-    const [{ data: rarityValueRows, error: rarityValueError }, { data, error }] =
+    const [rarityValues, { data, error }] =
       await Promise.all([
-        rarityValueRequest,
+        listAllMatchingCardRarityValues({
+          seriesSetIds,
+          setId,
+          sanitizedQuery,
+        }),
         supabase
           .from("card_rarity_meta")
           .select(
@@ -458,18 +544,12 @@ export class CatalogRepository {
           .order("rarity_name", { ascending: true }),
       ]);
 
-    if (rarityValueError) {
-      throw new Error(`카드 레어도 값 조회 실패: ${rarityValueError.message}`);
-    }
-
     if (error) {
       throw new Error(`카드 레어도 메타 조회 실패: ${error.message}`);
     }
 
     const availableRarityValues = new Set(
-      (rarityValueRows ?? [])
-        .map((row) => row.rarity?.trim())
-        .filter((value): value is string => Boolean(value)),
+      rarityValues.filter((value): value is string => Boolean(value)),
     );
     const grouped = groupRarityMetas((data as CardRarityMetaRow[]).map(mapRarityMetaRow));
 
@@ -477,15 +557,9 @@ export class CatalogRepository {
       return grouped;
     }
 
-    const filtered = grouped.filter((rarity) =>
-      rarity.filterValues.some((value) => availableRarityValues.has(value)),
+    return grouped.filter((rarity) =>
+      [...availableRarityValues].some((value) => rarityMetaMatchesValue(rarity, value)),
     );
-    const coveredValues = new Set(filtered.flatMap((rarity) => rarity.filterValues));
-    const fallback = [...availableRarityValues]
-      .filter((value) => !coveredValues.has(value))
-      .map(createFallbackRarityMeta);
-
-    return [...filtered, ...fallback].sort(sortRarityMetas);
   }
 
   async searchCards({
