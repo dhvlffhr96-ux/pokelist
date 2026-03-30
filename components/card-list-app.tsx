@@ -293,6 +293,7 @@ export function CardListApp({
   const [rarityOptions, setRarityOptions] = useState<CardRarityMeta[]>([]);
   const [selectedRarity, setSelectedRarity] = useState("");
   const [catalogViewMode, setCatalogViewMode] = useState<CatalogViewMode>("detail");
+  const [catalogShowOwnershipState, setCatalogShowOwnershipState] = useState(false);
   const [collectionQuery, setCollectionQuery] = useState("");
   const [collectionViewMode, setCollectionViewMode] = useState<CollectionViewMode>("detail");
   const [collectionOnlyMultiOwned, setCollectionOnlyMultiOwned] = useState(false);
@@ -319,6 +320,9 @@ export function CardListApp({
   const canManageActiveCollection = !isViewerMode && Boolean(
     sessionUserId && activeUserId && sessionUserId === activeUserId,
   );
+  const ownedCatalogCardIds = canManageActiveCollection
+    ? [...new Set(cards.map((card) => card.card.cardId))]
+    : [];
 
   const searchedCards = cards.filter((card) => matchesCollectionQuery(card, deferredQuery));
   const collectionSetOptions = getOwnedSetOptions(searchedCards);
@@ -1204,6 +1208,10 @@ export function CardListApp({
               setPending={isLoadingSets}
               rarityOptions={rarityOptions}
               selectedRarity={selectedRarity}
+              ownedCardIds={ownedCatalogCardIds}
+              showOwnershipState={canManageActiveCollection && catalogShowOwnershipState}
+              showOwnershipStateToggle={canManageActiveCollection}
+              ownershipStateEnabled={catalogShowOwnershipState}
               rarityPending={isLoadingRarities}
               error={catalogError}
               seriesError={seriesError}
@@ -1221,6 +1229,7 @@ export function CardListApp({
               onSearch={() => handleCatalogSearch(1)}
               onPageChange={handleCatalogSearch}
               onViewModeChange={setCatalogViewMode}
+              onOwnershipStateEnabledChange={setCatalogShowOwnershipState}
               onSeriesChange={(seriesName) => {
                 void handleSeriesChange(seriesName);
               }}

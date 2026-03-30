@@ -24,6 +24,10 @@ type CatalogSearchPanelProps = {
   selectedSeriesName: string;
   selectedSetId: number | null;
   selectedRarity: string;
+  ownedCardIds: number[];
+  showOwnershipState: boolean;
+  showOwnershipStateToggle: boolean;
+  ownershipStateEnabled: boolean;
   error?: string | null;
   seriesError?: string | null;
   setError?: string | null;
@@ -40,6 +44,7 @@ type CatalogSearchPanelProps = {
   onSearch: () => void;
   onPageChange: (page: number) => void;
   onViewModeChange: (viewMode: "detail" | "compact") => void;
+  onOwnershipStateEnabledChange: (enabled: boolean) => void;
   onSeriesChange: (seriesName: string) => void;
   onSetChange: (setId: string) => void;
   onRarityChange: (rarity: string) => void;
@@ -92,6 +97,10 @@ export function CatalogSearchPanel({
   selectedSeriesName,
   selectedSetId,
   selectedRarity,
+  ownedCardIds,
+  showOwnershipState,
+  showOwnershipStateToggle,
+  ownershipStateEnabled,
   error,
   seriesError,
   setError,
@@ -108,6 +117,7 @@ export function CatalogSearchPanel({
   onSearch,
   onPageChange,
   onViewModeChange,
+  onOwnershipStateEnabledChange,
   onSeriesChange,
   onSetChange,
   onRarityChange,
@@ -116,6 +126,7 @@ export function CatalogSearchPanel({
   const [resultFilter, setResultFilter] = useState("");
   const deferredResultFilter = useDeferredValue(resultFilter);
   const visibleResults = results.filter((card) => matchesResultFilter(card, deferredResultFilter));
+  const ownedCardIdSet = new Set(ownedCardIds);
 
   return (
     <>
@@ -267,6 +278,17 @@ export function CatalogSearchPanel({
           </button>
         </div>
 
+        {showOwnershipStateToggle ? (
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={ownershipStateEnabled}
+              onChange={(event) => onOwnershipStateEnabledChange(event.target.checked)}
+            />
+            <span>내 카드 보유 여부 컬러로 보기</span>
+          </label>
+        ) : null}
+
         {results.length === 0 ? (
           <div className="empty-state">
             아직 검색 결과가 없습니다.
@@ -300,6 +322,9 @@ export function CatalogSearchPanel({
                 {page} / {totalPages} 페이지
               </span>
               <span>페이지당 {pageSize}개</span>
+              {showOwnershipState ? (
+                <span>보유 카드는 컬러, 미보유 카드는 흑백으로 표시됩니다.</span>
+              ) : null}
               <span>카드나 사진을 누르면 추가 창이 열립니다.</span>
             </div>
 
@@ -314,11 +339,12 @@ export function CatalogSearchPanel({
                 {visibleResults.map((card) => {
                 const previewImageSrc = getPreviewImageSrc(card);
                 const isSelected = selectedCardId === card.id;
+                const isOwned = showOwnershipState && ownedCardIdSet.has(card.id);
 
                 if (viewMode === "compact") {
                   return (
                     <article
-                      className={`catalog-card-compact ${selectionEnabled ? "catalog-card-interactive" : "catalog-card-readonly"} ${isSelected ? "catalog-card-selected" : ""}`}
+                      className={`catalog-card-compact ${selectionEnabled ? "catalog-card-interactive" : "catalog-card-readonly"} ${isSelected ? "catalog-card-selected" : ""} ${showOwnershipState ? (isOwned ? "catalog-card-owned" : "catalog-card-unowned") : ""}`}
                       key={card.id}
                       role={selectionEnabled ? "button" : undefined}
                       tabIndex={selectionEnabled ? 0 : undefined}
@@ -367,6 +393,11 @@ export function CatalogSearchPanel({
                         <span className="catalog-card-compact-subtitle">
                           {card.set.setNameKo}
                         </span>
+                        {showOwnershipState ? (
+                          <span className={`catalog-ownership-badge ${isOwned ? "catalog-ownership-badge-owned" : "catalog-ownership-badge-unowned"}`}>
+                            {isOwned ? "보유 중" : "미보유"}
+                          </span>
+                        ) : null}
                         {isSelected ? <span className="status-pill">추가 창 열림</span> : null}
                       </div>
                     </article>
@@ -375,7 +406,7 @@ export function CatalogSearchPanel({
 
                   return (
                     <article
-                      className={`catalog-card ${selectionEnabled ? "catalog-card-interactive" : "catalog-card-readonly"} ${isSelected ? "catalog-card-selected" : ""}`}
+                      className={`catalog-card ${selectionEnabled ? "catalog-card-interactive" : "catalog-card-readonly"} ${isSelected ? "catalog-card-selected" : ""} ${showOwnershipState ? (isOwned ? "catalog-card-owned" : "catalog-card-unowned") : ""}`}
                       key={card.id}
                       role={selectionEnabled ? "button" : undefined}
                       tabIndex={selectionEnabled ? 0 : undefined}
@@ -422,7 +453,14 @@ export function CatalogSearchPanel({
                             <h3>{card.cardNameKo}</h3>
                             <p>{card.set.setNameKo}</p>
                           </div>
-                          {isSelected ? <span className="status-pill">추가 창 열림</span> : null}
+                          <div className="catalog-card-header-badges">
+                            {showOwnershipState ? (
+                              <span className={`catalog-ownership-badge ${isOwned ? "catalog-ownership-badge-owned" : "catalog-ownership-badge-unowned"}`}>
+                                {isOwned ? "보유 중" : "미보유"}
+                              </span>
+                            ) : null}
+                            {isSelected ? <span className="status-pill">추가 창 열림</span> : null}
+                          </div>
                         </div>
 
                         <div className="catalog-card-meta">
