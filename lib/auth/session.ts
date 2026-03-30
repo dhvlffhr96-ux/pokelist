@@ -117,7 +117,6 @@ export function applySessionCookie(response: NextResponse, userId: string) {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: SESSION_DURATION_SECONDS,
   });
 }
 

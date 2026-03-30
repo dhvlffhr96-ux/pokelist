@@ -36,6 +36,10 @@ export function SiteHeader() {
   const [authPasswordConfirm, setAuthPasswordConfirm] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [isPendingAuth, setIsPendingAuth] = useState(false);
+  const viewedUserId =
+    sessionUserId && summary.activeUserId && summary.activeUserId !== sessionUserId
+      ? summary.activeUserId
+      : null;
 
   function closeDialog() {
     setDialogMode(null);
@@ -116,8 +120,8 @@ export function SiteHeader() {
               <div className="header-summary-wrap">
                 <div className="header-summary" aria-label="현재 목록 요약">
                   <div className="header-summary-item">
-                    <span>사용자</span>
-                    <strong>{summary.activeUserId ?? sessionUserId}</strong>
+                    <span>로그인</span>
+                    <strong>{sessionUserId}</strong>
                   </div>
                   <div className="header-summary-item">
                     <span>수량</span>
@@ -129,6 +133,12 @@ export function SiteHeader() {
                       {summary.totalCards}/{summary.uniqueSets}
                     </strong>
                   </div>
+                  {viewedUserId ? (
+                    <div className="header-summary-item">
+                      <span>열람</span>
+                      <strong>{viewedUserId}</strong>
+                    </div>
+                  ) : null}
                 </div>
 
                 <button className="btn btn-secondary" type="button" onClick={() => void handleLogout()}>

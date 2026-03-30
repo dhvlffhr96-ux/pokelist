@@ -80,7 +80,13 @@ export function HeaderAuthDialog({
 
         {error ? <div className="alert alert-error">{error}</div> : null}
 
-        <div className="form-grid">
+        <form
+          className="form-grid"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
           <div className="field">
             <label htmlFor="headerAuthUserId">사용자 ID</label>
             <input
@@ -119,11 +125,11 @@ export function HeaderAuthDialog({
           ) : null}
 
           <div className="form-actions">
-            <button className="btn btn-primary" type="button" onClick={onSubmit} disabled={pending}>
+            <button className="btn btn-primary" type="submit" disabled={pending}>
               {pending ? "처리 중..." : mode === "register" ? "아이디 등록" : "로그인"}
             </button>
           </div>
-        </div>
+        </form>
       </div>
     </div>
   );

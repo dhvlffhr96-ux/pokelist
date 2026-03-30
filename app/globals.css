@@ -109,7 +109,9 @@ body {
 .header-summary {
   display: flex;
   align-items: stretch;
+  flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
 }
 
 .header-auth-actions {
@@ -1585,7 +1587,7 @@ a {
   .header-summary {
     width: 100%;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
   }
 
   .header-auth-actions {

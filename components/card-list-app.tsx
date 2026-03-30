@@ -245,16 +245,16 @@ function getOwnedRarityOptions(cards: OwnedCardItem[], rarityOptions: CardRarity
     }));
 }
 
-function readStoredActiveUserId() {
+function readStoredActiveUserId(storageKey: string) {
   if (typeof window === "undefined") {
     return null;
   }
 
-  const storedUserId = window.localStorage.getItem(LAST_ACTIVE_USER_ID_STORAGE_KEY);
+  const storedUserId = window.localStorage.getItem(storageKey);
   const parsedUserId = userIdSchema.safeParse(storedUserId);
 
   if (!parsedUserId.success) {
-    window.localStorage.removeItem(LAST_ACTIVE_USER_ID_STORAGE_KEY);
+    window.localStorage.removeItem(storageKey);
     return null;
   }
 
@@ -270,6 +270,7 @@ export function CardListApp({
   const pendingCatalogScrollRef = useRef(false);
   const hasRestoredUserRef = useRef(false);
   const autoLoadedSessionUserRef = useRef<string | null>(null);
+  const userLoadRequestIdRef = useRef(0);
   const { sessionUserId } = useAppAuth();
   const { setSummary } = useAppSummary();
   const [userIdInput, setUserIdInput] = useState("");
@@ -349,6 +350,25 @@ export function CardListApp({
   });
   const totalQuantity = cards.reduce((sum, card) => sum + card.quantity, 0);
   const uniqueSets = new Set(cards.map((card) => card.card.setNameKo)).size;
+
+  const resetLoadedCollection = useCallback((options?: { clearInput?: boolean }) => {
+    setActiveUserId(null);
+    setStoragePath(null);
+    setCards([]);
+    setEditingCard(null);
+    setInspectCard(null);
+    setSelectedMaster(null);
+    setCollectionOnlyMultiOwned(false);
+    setSelectedCollectionRarity("");
+    setSelectedCollectionSet("");
+    setLoadError(null);
+    setSubmitError(null);
+    setSuccessMessage(null);
+
+    if (options?.clearInput) {
+      setUserIdInput("");
+    }
+  }, []);
 
   function getWriteBlockedMessage() {
     if (!activeUserId) {
@@ -505,6 +525,21 @@ export function CardListApp({
   }, [activeUserId, cards.length, setSummary, totalQuantity, uniqueSets]);
 
   useEffect(() => {
+    if (!isViewerMode) {
+      return;
+    }
+
+    return () => {
+      setSummary({
+        activeUserId: null,
+        totalQuantity: 0,
+        totalCards: 0,
+        uniqueSets: 0,
+      });
+    };
+  }, [isViewerMode, setSummary]);
+
+  useEffect(() => {
     if (
       selectedCollectionRarity &&
       !collectionRarityOptions.some((rarity) => rarity.filterKey === selectedCollectionRarity)
@@ -611,6 +646,7 @@ export function CardListApp({
         return false;
       }
 
+      const requestId = ++userLoadRequestIdRef.current;
       setIsLoadingUser(true);
       setLoadError(null);
       setSubmitError(null);
@@ -629,6 +665,10 @@ export function CardListApp({
           throw new Error(result.error ?? "사용자 카드 목록을 불러오지 못했습니다.");
         }
 
+        if (requestId !== userLoadRequestIdRef.current) {
+          return false;
+        }
+
         setActiveUserId(result.data.userId);
         setUserIdInput(result.data.userId);
         setStoragePath(result.data.storagePath);
@@ -639,7 +679,9 @@ export function CardListApp({
         setCollectionOnlyMultiOwned(false);
         setSelectedCollectionRarity("");
         setSelectedCollectionSet("");
-        window.localStorage.setItem(LAST_ACTIVE_USER_ID_STORAGE_KEY, result.data.userId);
+        if (!isViewerMode) {
+          window.localStorage.setItem(LAST_ACTIVE_USER_ID_STORAGE_KEY, result.data.userId);
+        }
         setSuccessMessage(
           options?.restored
             ? `사용자 "${result.data.userId}" 목록을 자동으로 불러왔습니다.`
@@ -647,28 +689,26 @@ export function CardListApp({
         );
         return true;
       } catch (error) {
-        setActiveUserId(null);
-        setStoragePath(null);
-        setCards([]);
-        setEditingCard(null);
-        setInspectCard(null);
-        setSelectedMaster(null);
-        setCollectionOnlyMultiOwned(false);
-        setSelectedCollectionRarity("");
-        setSelectedCollectionSet("");
+        if (requestId !== userLoadRequestIdRef.current) {
+          return false;
+        }
+
+        resetLoadedCollection();
         setLoadError(
           error instanceof Error ? error.message : "사용자 카드 목록을 불러오지 못했습니다.",
         );
 
-        if (options?.restored) {
+        if (options?.restored && !isViewerMode) {
           window.localStorage.removeItem(LAST_ACTIVE_USER_ID_STORAGE_KEY);
         }
         return false;
       } finally {
-        setIsLoadingUser(false);
+        if (requestId === userLoadRequestIdRef.current) {
+          setIsLoadingUser(false);
+        }
       }
     },
-    [],
+    [isViewerMode, resetLoadedCollection],
   );
 
   useEffect(() => {
@@ -678,7 +718,17 @@ export function CardListApp({
 
     hasRestoredUserRef.current = true;
 
-    const storedUserId = readStoredActiveUserId();
+    if (isViewerMode) {
+      setUserIdInput("");
+      return;
+    }
+
+    if (sessionUserId) {
+      setUserIdInput(sessionUserId);
+      return;
+    }
+
+    const storedUserId = readStoredActiveUserId(LAST_ACTIVE_USER_ID_STORAGE_KEY);
 
     if (!storedUserId) {
       return;
@@ -688,17 +738,24 @@ export function CardListApp({
     void loadUserCollection(storedUserId, {
       restored: true,
     });
-  }, [loadUserCollection]);
+  }, [isViewerMode, loadUserCollection, sessionUserId]);
 
   useEffect(() => {
-    if (sessionUserId && !userIdInput) {
+    if (!isViewerMode && sessionUserId && !userIdInput) {
       setUserIdInput(sessionUserId);
     }
-  }, [sessionUserId, userIdInput]);
+  }, [isViewerMode, sessionUserId, userIdInput]);
 
   useEffect(() => {
     if (!sessionUserId) {
       autoLoadedSessionUserRef.current = null;
+
+      if (isCollectionMode) {
+        resetLoadedCollection({
+          clearInput: true,
+        });
+      }
+
       return;
     }
 
@@ -733,6 +790,7 @@ export function CardListApp({
     isCatalogMode,
     isCollectionMode,
     loadUserCollection,
+    resetLoadedCollection,
     sessionUserId,
     userIdInput,
   ]);
@@ -1084,7 +1142,13 @@ export function CardListApp({
 
             {loadError ? <div className="alert alert-error">{loadError}</div> : null}
 
-            <div className="identity-grid">
+            <form
+              className="identity-grid"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void loadUserCollection(userIdInput);
+              }}
+            >
               <div className="field">
                 <label htmlFor="userId">사용자 ID</label>
                 <input
@@ -1098,16 +1162,13 @@ export function CardListApp({
               <div className="form-actions align-end">
                 <button
                   className="btn btn-primary"
-                  type="button"
-                  onClick={() => {
-                    void loadUserCollection(userIdInput);
-                  }}
+                  type="submit"
                   disabled={isLoadingUser}
                 >
                   {isLoadingUser ? "불러오는 중..." : "목록 불러오기"}
                 </button>
               </div>
-            </div>
+            </form>
 
             {storagePath ? (
               <div className="results-meta">
@@ -1290,7 +1351,15 @@ export function CardListApp({
         </>
       ) : null}
 
-      {isCollectionMode || (isViewerMode && activeUserId) ? (
+      {isCollectionMode && !sessionUserId ? (
+        <section className="panel list-panel">
+          <div className="empty-state">
+            로그인 후 내 카드 목록을 이용해 주세요.
+          </div>
+        </section>
+      ) : null}
+
+      {(isCollectionMode && sessionUserId) || (isViewerMode && activeUserId) ? (
         <>
           <section className="panel list-panel">
             <div className="panel-header">

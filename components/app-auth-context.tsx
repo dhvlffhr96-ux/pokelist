@@ -2,6 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 
+const LAST_ACTIVE_USER_ID_STORAGE_KEY = "pokelist:last-active-user-id";
+
 type SessionResponse = {
   userId: string | null;
 };
@@ -58,6 +60,7 @@ export function AppAuthProvider({
     await fetch("/api/auth/logout", {
       method: "POST",
     });
+    window.localStorage.removeItem(LAST_ACTIVE_USER_ID_STORAGE_KEY);
     setSessionUserId(null);
   }, []);
 
