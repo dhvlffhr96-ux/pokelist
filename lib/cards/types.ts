@@ -2,6 +2,12 @@ export const CARD_CONDITIONS = ["SEALED", "MINT", "GOOD", "PLAYED"] as const;
 
 export type CardCondition = (typeof CARD_CONDITIONS)[number];
 export type CardType = "pokemon" | "trainer" | "energy";
+export type CatalogSortOrder = "default" | "latest" | "oldest";
+export type OwnedCardSortOrder =
+  | "registered_latest"
+  | "registered_oldest"
+  | "release_latest"
+  | "release_oldest";
 
 export const CARD_CONDITION_LABELS: Record<CardCondition, string> = {
   SEALED: "미개봉",
@@ -78,6 +84,7 @@ export interface OwnedCardSnapshot {
   setNameKo: string;
   setCode: string | null;
   seriesName: string | null;
+  releaseDate: string | null;
 }
 
 export interface OwnedCardItem {
@@ -108,6 +115,14 @@ export interface PaginatedResult<T> {
 
 export interface CreateOwnedCardInput {
   cardId: number;
+  quantity: number;
+  condition: CardCondition;
+  memo?: string;
+  acquiredAt?: string;
+}
+
+export interface BulkCreateOwnedCardInput {
+  cardIds: number[];
   quantity: number;
   condition: CardCondition;
   memo?: string;

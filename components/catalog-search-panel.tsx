@@ -3,6 +3,7 @@
 import { useDeferredValue, useState, type RefObject } from "react";
 import {
   CARD_TYPE_LABELS,
+  type CatalogSortOrder,
   type CardMaster,
   type CardRarityMeta,
   type CardSeriesSummary,
@@ -20,10 +21,13 @@ type CatalogSearchPanelProps = {
   seriesOptions: CardSeriesSummary[];
   setOptions: CardSetSummary[];
   rarityOptions: CardRarityMeta[];
-  selectedCardId: number | null;
+  selectedCardIds: number[];
+  selectionMode: boolean;
+  selectedCount: number;
   selectedSeriesName: string;
   selectedSetId: number | null;
   selectedRarity: string;
+  selectedSortOrder: CatalogSortOrder;
   ownedCardIds: number[];
   showOwnershipState: boolean;
   showOwnershipStateToggle: boolean;
@@ -44,7 +48,13 @@ type CatalogSearchPanelProps = {
   onSearch: () => void;
   onPageChange: (page: number) => void;
   onViewModeChange: (viewMode: "detail" | "compact") => void;
+  onSortOrderToggle: () => void;
   onOwnershipStateEnabledChange: (enabled: boolean) => void;
+  onSelectionModeToggle: () => void;
+  onToggleCardSelection: (card: CardMaster) => void;
+  onSelectAllVisibleResults: (cards: CardMaster[]) => void;
+  onClearSelection: () => void;
+  onOpenBulkCreate: () => void;
   onSeriesChange: (seriesName: string) => void;
   onSetChange: (setId: string) => void;
   onRarityChange: (rarity: string) => void;
@@ -93,10 +103,13 @@ export function CatalogSearchPanel({
   seriesOptions,
   setOptions,
   rarityOptions,
-  selectedCardId,
+  selectedCardIds,
+  selectionMode,
+  selectedCount,
   selectedSeriesName,
   selectedSetId,
   selectedRarity,
+  selectedSortOrder,
   ownedCardIds,
   showOwnershipState,
   showOwnershipStateToggle,
@@ -117,7 +130,13 @@ export function CatalogSearchPanel({
   onSearch,
   onPageChange,
   onViewModeChange,
+  onSortOrderToggle,
   onOwnershipStateEnabledChange,
+  onSelectionModeToggle,
+  onToggleCardSelection,
+  onSelectAllVisibleResults,
+  onClearSelection,
+  onOpenBulkCreate,
   onSeriesChange,
   onSetChange,
   onRarityChange,
@@ -127,6 +146,7 @@ export function CatalogSearchPanel({
   const deferredResultFilter = useDeferredValue(resultFilter);
   const visibleResults = results.filter((card) => matchesResultFilter(card, deferredResultFilter));
   const ownedCardIdSet = new Set(ownedCardIds);
+  const selectedCardIdSet = new Set(selectedCardIds);
 
   return (
     <>
@@ -245,6 +265,19 @@ export function CatalogSearchPanel({
                 ))}
               </select>
             </div>
+
+            <div className="field">
+              <label htmlFor="catalogSortToggle">정렬</label>
+              <button
+                id="catalogSortToggle"
+                className="sort-toggle-button"
+                type="button"
+                onClick={onSortOrderToggle}
+                disabled={pending}
+              >
+                {selectedSortOrder === "oldest" ? "오래된순" : "최신순"}
+              </button>
+            </div>
           </div>
 
           {seriesError ? <div className="alert alert-error">{seriesError}</div> : null}
@@ -257,37 +290,81 @@ export function CatalogSearchPanel({
           </div>
         </div>
 
-        <div className="view-switch" role="tablist" aria-label="카드 검색 보기 방식">
-          <button
-            className={`view-switch-button ${viewMode === "detail" ? "view-switch-button-active" : ""}`}
-            type="button"
-            role="tab"
-            aria-selected={viewMode === "detail"}
-            onClick={() => onViewModeChange("detail")}
-          >
-            상세 보기
-          </button>
-          <button
-            className={`view-switch-button ${viewMode === "compact" ? "view-switch-button-active" : ""}`}
-            type="button"
-            role="tab"
-            aria-selected={viewMode === "compact"}
-            onClick={() => onViewModeChange("compact")}
-          >
-            간단 보기
-          </button>
-        </div>
+        <div className="catalog-control-row">
+          <div className="view-switch catalog-view-switch" role="tablist" aria-label="카드 검색 보기 방식">
+            <button
+              className={`view-switch-button ${viewMode === "detail" ? "view-switch-button-active" : ""}`}
+              type="button"
+              role="tab"
+              aria-selected={viewMode === "detail"}
+              onClick={() => onViewModeChange("detail")}
+            >
+              상세 보기
+            </button>
+            <button
+              className={`view-switch-button ${viewMode === "compact" ? "view-switch-button-active" : ""}`}
+              type="button"
+              role="tab"
+              aria-selected={viewMode === "compact"}
+              onClick={() => onViewModeChange("compact")}
+            >
+              간단 보기
+            </button>
+          </div>
 
-        {showOwnershipStateToggle ? (
-          <label className="checkbox-field">
-            <input
-              type="checkbox"
-              checked={ownershipStateEnabled}
-              onChange={(event) => onOwnershipStateEnabledChange(event.target.checked)}
-            />
-            <span>내 카드 보유 여부 컬러로 보기</span>
-          </label>
-        ) : null}
+          {showOwnershipStateToggle ? (
+            <label className="checkbox-field catalog-inline-checkbox">
+              <input
+                type="checkbox"
+                checked={ownershipStateEnabled}
+                onChange={(event) => onOwnershipStateEnabledChange(event.target.checked)}
+              />
+              <span>내 카드 보유 여부 컬러로 보기</span>
+            </label>
+          ) : null}
+
+          {selectionEnabled ? (
+            <div className="selection-mode-bar catalog-selection-mode-bar">
+              <button
+                className={`btn ${selectionMode ? "btn-secondary" : "btn-primary"}`}
+                type="button"
+                onClick={onSelectionModeToggle}
+              >
+                {selectionMode ? "선택 완료" : "선택 모드"}
+              </button>
+
+              {selectionMode ? (
+                <>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={() => onSelectAllVisibleResults(visibleResults)}
+                    disabled={visibleResults.length === 0}
+                  >
+                    현재 페이지 전체 선택
+                  </button>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={onClearSelection}
+                    disabled={selectedCount === 0}
+                  >
+                    선택 해제
+                  </button>
+                  <span className="selection-mode-count">{selectedCount}장 선택</span>
+                  <button
+                    className="btn btn-primary"
+                    type="button"
+                    onClick={onOpenBulkCreate}
+                    disabled={selectedCount === 0}
+                  >
+                    일괄 등록
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
 
         {results.length === 0 ? (
           <div className="empty-state">
@@ -325,6 +402,7 @@ export function CatalogSearchPanel({
               {showOwnershipState ? (
                 <span>보유 카드는 컬러, 미보유 카드는 흑백으로 표시됩니다.</span>
               ) : null}
+              {selectionMode ? <span>카드를 누르면 선택되며, 다시 누르면 해제됩니다.</span> : null}
               <span>카드나 사진을 누르면 추가 창이 열립니다.</span>
             </div>
 
@@ -338,7 +416,7 @@ export function CatalogSearchPanel({
               <div className={`catalog-grid ${viewMode === "compact" ? "catalog-grid-compact" : ""}`}>
                 {visibleResults.map((card) => {
                 const previewImageSrc = getPreviewImageSrc(card);
-                const isSelected = selectedCardId === card.id;
+                const isSelected = selectedCardIdSet.has(card.id);
                 const isOwned = showOwnershipState && ownedCardIdSet.has(card.id);
 
                 if (viewMode === "compact") {
@@ -350,6 +428,11 @@ export function CatalogSearchPanel({
                       tabIndex={selectionEnabled ? 0 : undefined}
                       onClick={() => {
                         if (selectionEnabled) {
+                          if (selectionMode) {
+                            onToggleCardSelection(card);
+                            return;
+                          }
+
                           onSelect(card);
                         }
                       }}
@@ -360,11 +443,30 @@ export function CatalogSearchPanel({
 
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
+                          if (selectionMode) {
+                            onToggleCardSelection(card);
+                            return;
+                          }
+
                           onSelect(card);
                         }
                       }}
-                      aria-label={`${card.cardNameKo} 카드 추가 창 열기`}
+                      aria-label={selectionMode ? `${card.cardNameKo} 카드 선택 토글` : `${card.cardNameKo} 카드 추가 창 열기`}
                     >
+                      {selectionMode ? (
+                        <label
+                          className="catalog-card-selection-control"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => onToggleCardSelection(card)}
+                            aria-label={`${card.cardNameKo} 카드 선택`}
+                          />
+                          <span>{isSelected ? "선택됨" : "선택"}</span>
+                        </label>
+                      ) : null}
                       <div className="catalog-card-compact-media">
                         {previewImageSrc ? (
                           <button
@@ -372,9 +474,13 @@ export function CatalogSearchPanel({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
+                              if (selectionMode) {
+                                onToggleCardSelection(card);
+                                return;
+                              }
                               onSelect(card);
                             }}
-                            aria-label={`${card.cardNameKo} 카드 추가 창 열기`}
+                            aria-label={selectionMode ? `${card.cardNameKo} 카드 선택 토글` : `${card.cardNameKo} 카드 추가 창 열기`}
                           >
                             {/* External master thumbnails can come from multiple hosts. */}
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -412,6 +518,11 @@ export function CatalogSearchPanel({
                       tabIndex={selectionEnabled ? 0 : undefined}
                       onClick={() => {
                         if (selectionEnabled) {
+                          if (selectionMode) {
+                            onToggleCardSelection(card);
+                            return;
+                          }
+
                           onSelect(card);
                         }
                       }}
@@ -422,11 +533,30 @@ export function CatalogSearchPanel({
 
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
+                          if (selectionMode) {
+                            onToggleCardSelection(card);
+                            return;
+                          }
+
                           onSelect(card);
                         }
                       }}
-                      aria-label={`${card.cardNameKo} 카드 추가 창 열기`}
+                      aria-label={selectionMode ? `${card.cardNameKo} 카드 선택 토글` : `${card.cardNameKo} 카드 추가 창 열기`}
                     >
+                      {selectionMode ? (
+                        <label
+                          className="catalog-card-selection-control"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => onToggleCardSelection(card)}
+                            aria-label={`${card.cardNameKo} 카드 선택`}
+                          />
+                          <span>{isSelected ? "선택됨" : "선택"}</span>
+                        </label>
+                      ) : null}
                       <div className="catalog-card-media">
                         {previewImageSrc ? (
                           <button
@@ -434,9 +564,13 @@ export function CatalogSearchPanel({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
+                              if (selectionMode) {
+                                onToggleCardSelection(card);
+                                return;
+                              }
                               onSelect(card);
                             }}
-                            aria-label={`${card.cardNameKo} 카드 추가 창 열기`}
+                            aria-label={selectionMode ? `${card.cardNameKo} 카드 선택 토글` : `${card.cardNameKo} 카드 추가 창 열기`}
                           >
                             {/* External master thumbnails can come from multiple hosts. */}
                             {/* eslint-disable-next-line @next/next/no-img-element */}

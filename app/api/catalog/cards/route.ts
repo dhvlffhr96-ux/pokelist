@@ -6,7 +6,8 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const query = searchParams.get("q") ?? "";
     const page = searchParams.get("page") ?? "1";
-    const pageSize = searchParams.get("pageSize") ?? "10";
+    const pageSize = searchParams.get("pageSize") ?? "24";
+    const sort = searchParams.get("sort") ?? "default";
     const seriesName = searchParams.get("seriesName") ?? "";
     const setId = searchParams.get("setId");
     const rarities = searchParams.getAll("rarity").filter(Boolean);
@@ -14,6 +15,7 @@ export async function GET(request: Request) {
       query,
       page: Number(page),
       pageSize: Number(pageSize),
+      sort: sort === "latest" || sort === "oldest" ? sort : "default",
       seriesName: seriesName || undefined,
       setId: setId ? Number(setId) : undefined,
       rarities: rarities.length > 0 ? rarities : undefined,

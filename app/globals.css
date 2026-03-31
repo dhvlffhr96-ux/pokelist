@@ -559,7 +559,7 @@ a {
 .collection-toolbar {
   display: grid;
   gap: 12px;
-  width: min(100%, 760px);
+  width: 100%;
 }
 
 .collection-toolbar input {
@@ -599,7 +599,7 @@ a {
 .collection-filter-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(180px, 0.9fr) repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(180px, 0.9fr) repeat(4, minmax(0, 1fr));
   align-items: end;
 }
 
@@ -621,6 +621,45 @@ a {
   height: 18px;
   margin: 0;
   accent-color: var(--brand);
+}
+
+.selection-mode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.selection-mode-count {
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.catalog-control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.catalog-view-switch {
+  width: auto;
+  min-width: 240px;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+}
+
+.catalog-inline-checkbox {
+  min-width: 260px;
+  white-space: nowrap;
+}
+
+.catalog-selection-mode-bar {
+  flex: 1 1 auto;
+  justify-content: flex-end;
 }
 
 .card-grid {
@@ -708,7 +747,34 @@ a {
 .filter-grid {
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.sort-toggle-button {
+  width: 100%;
+  min-height: 48px;
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(18, 18, 18, 0.96);
+  color: var(--text);
+  font-weight: 700;
+  text-align: left;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.sort-toggle-button:hover:not(:disabled) {
+  border-color: rgba(255, 123, 34, 0.28);
+  background: rgba(255, 123, 34, 0.08);
+  color: var(--brand-strong);
+}
+
+.sort-toggle-button:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .filter-help {
@@ -888,6 +954,27 @@ a {
 .catalog-card-selected {
   border-color: rgba(255, 123, 34, 0.44);
   box-shadow: 0 0 0 3px rgba(255, 123, 34, 0.12);
+}
+
+.catalog-card-selection-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.catalog-card-selection-control input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--brand);
 }
 
 .catalog-card-owned {
@@ -1545,6 +1632,21 @@ a {
 
   .collection-filter-grid {
     grid-template-columns: 1fr;
+  }
+
+  .catalog-control-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .catalog-view-switch,
+  .catalog-inline-checkbox,
+  .catalog-selection-mode-bar {
+    width: 100%;
+  }
+
+  .catalog-selection-mode-bar {
+    justify-content: flex-start;
   }
 }
 

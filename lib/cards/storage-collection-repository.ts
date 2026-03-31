@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { getAppEnv } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
+import type { Database } from "@/lib/supabase/database.types";
 import {
   isMissingBucketError,
   isMissingObjectError,
 } from "@/lib/supabase/storage-errors";
 import type {
+  BulkCreateOwnedCardInput,
   CardMaster,
   CreateOwnedCardInput,
   OwnedCardItem,
@@ -13,6 +15,10 @@ import type {
   UpdateOwnedCardInput,
   UserCollectionFile,
 } from "@/lib/cards/types";
+
+type CardReleaseLookupRow = Pick<Database["public"]["Tables"]["cards"]["Row"], "id"> & {
+  card_sets: Pick<Database["public"]["Tables"]["card_sets"]["Row"], "release_date"> | null;
+};
 
 const cardSnapshotSchema = z.object({
   cardId: z.number().int().positive(),
@@ -28,6 +34,7 @@ const cardSnapshotSchema = z.object({
   setNameKo: z.string(),
   setCode: z.string().nullable(),
   seriesName: z.string().nullable(),
+  releaseDate: z.string().nullable().optional().default(null),
 });
 
 const ownedCardItemSchema = z.object({
@@ -71,6 +78,21 @@ function toCardSnapshot(card: CardMaster): OwnedCardSnapshot {
     setNameKo: card.set.setNameKo,
     setCode: card.set.setCode,
     seriesName: card.set.seriesName,
+    releaseDate: card.set.releaseDate,
+  };
+}
+
+function buildCreatedItem(userId: string, card: CardMaster, input: CreateOwnedCardInput, timestamp: string): OwnedCardItem {
+  return {
+    id: crypto.randomUUID(),
+    userId,
+    quantity: input.quantity,
+    condition: input.condition,
+    memo: input.memo ?? null,
+    acquiredAt: input.acquiredAt ?? null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    card: toCardSnapshot(card),
   };
 }
 
@@ -83,6 +105,89 @@ function createEmptyCollection(userId: string): UserCollectionFile {
 }
 
 export class StorageCollectionRepository {
+  private async backfillLegacyReleaseDates(collection: UserCollectionFile) {
+    const missingCardIds = [...new Set(
+      collection.items
+        .filter((item) => !item.card.releaseDate)
+        .map((item) => item.card.cardId),
+    )];
+
+    if (missingCardIds.length === 0) {
+      return collection;
+    }
+
+    const supabase = createSupabaseAdminClient();
+    const releaseDateByCardId = new Map<number, string | null>();
+    const chunkSize = 200;
+
+    try {
+      for (let index = 0; index < missingCardIds.length; index += chunkSize) {
+        const chunk = missingCardIds.slice(index, index + chunkSize);
+        const { data, error } = await supabase
+          .from("cards")
+          .select(`
+            id,
+            card_sets (
+              release_date
+            )
+          `)
+          .in("id", chunk);
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        for (const row of (data as CardReleaseLookupRow[]) ?? []) {
+          releaseDateByCardId.set(row.id, row.card_sets?.release_date ?? null);
+        }
+      }
+    } catch {
+      return collection;
+    }
+
+    if (releaseDateByCardId.size === 0) {
+      return collection;
+    }
+
+    let didHydrate = false;
+    const nextCollection: UserCollectionFile = {
+      ...collection,
+      items: sortItems(collection.items.map((item) => {
+        if (item.card.releaseDate) {
+          return item;
+        }
+
+        const releaseDate = releaseDateByCardId.get(item.card.cardId) ?? null;
+
+        if (!releaseDate) {
+          return item;
+        }
+
+        didHydrate = true;
+
+        return {
+          ...item,
+          card: {
+            ...item.card,
+            releaseDate,
+          },
+        };
+      })),
+    };
+
+    if (!didHydrate) {
+      return collection;
+    }
+
+    try {
+      await this.writeUserCollection(nextCollection);
+    } catch {
+      return nextCollection;
+    }
+
+    return nextCollection;
+  }
+
   private getBucketName() {
     return getAppEnv().userCollectionBucket;
   }
@@ -132,10 +237,12 @@ export class StorageCollectionRepository {
         throw new Error("사용자 ID와 저장된 문서가 일치하지 않습니다.");
       }
 
-      return {
+      const normalizedCollection = {
         ...parsed,
         items: sortItems(parsed.items),
       };
+
+      return this.backfillLegacyReleaseDates(normalizedCollection);
     } catch {
       throw new Error("사용자 카드 목록 문서 형식이 올바르지 않습니다.");
     }
@@ -208,17 +315,7 @@ export class StorageCollectionRepository {
       return saved.items.find((item) => item.id === existing.id)!;
     }
 
-    const nextItem: OwnedCardItem = {
-      id: crypto.randomUUID(),
-      userId,
-      quantity: input.quantity,
-      condition: input.condition,
-      memo: input.memo ?? null,
-      acquiredAt: input.acquiredAt ?? null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      card: toCardSnapshot(card),
-    };
+    const nextItem = buildCreatedItem(userId, card, input, timestamp);
 
     const saved = await this.writeUserCollection({
       ...collection,
@@ -226,6 +323,55 @@ export class StorageCollectionRepository {
     });
 
     return saved.items.find((item) => item.id === nextItem.id)!;
+  }
+
+  async upsertOwnedCards(userId: string, cards: CardMaster[], input: BulkCreateOwnedCardInput) {
+    const collection = await this.readUserCollection(userId);
+    const timestamp = nowIso();
+    const nextItems = [...collection.items];
+    const touchedItemIds: string[] = [];
+
+    for (const card of cards) {
+      const existingIndex = nextItems.findIndex((item) => item.card.cardId === card.id);
+
+      if (existingIndex >= 0) {
+        const existingItem = nextItems[existingIndex];
+        nextItems[existingIndex] = {
+          ...existingItem,
+          quantity: Math.min(existingItem.quantity + input.quantity, 999),
+          condition: input.condition,
+          memo: input.memo ?? null,
+          acquiredAt: input.acquiredAt ?? null,
+          updatedAt: timestamp,
+          card: toCardSnapshot(card),
+        };
+        touchedItemIds.push(existingItem.id);
+        continue;
+      }
+
+      const createdItem = buildCreatedItem(
+        userId,
+        card,
+        {
+          cardId: card.id,
+          quantity: input.quantity,
+          condition: input.condition,
+          memo: input.memo,
+          acquiredAt: input.acquiredAt,
+        },
+        timestamp,
+      );
+
+      nextItems.push(createdItem);
+      touchedItemIds.push(createdItem.id);
+    }
+
+    const saved = await this.writeUserCollection({
+      ...collection,
+      items: nextItems,
+    });
+
+    return saved.items.filter((item) => touchedItemIds.includes(item.id));
   }
 
   async updateOwnedCard(userId: string, itemId: string, input: UpdateOwnedCardInput) {

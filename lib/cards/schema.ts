@@ -27,6 +27,13 @@ const collectionFormSchema = z.object({
     }),
 });
 
+const bulkCollectionFormSchema = collectionFormSchema.extend({
+  cardIds: z
+    .array(z.coerce.number().int().positive("마스터 카드 ID는 양수여야 합니다."))
+    .min(1, "최소 1장 이상의 카드를 선택해 주세요.")
+    .max(200, "한 번에 200장까지만 등록할 수 있습니다."),
+});
+
 export const userIdSchema = z
   .string()
   .trim()
@@ -37,7 +44,8 @@ export const userIdSchema = z
 export const catalogQuerySchema = z.object({
   q: z.string().trim().max(80, "검색어는 80자 이하로 입력해 주세요.").default(""),
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(20).default(10),
+  pageSize: z.coerce.number().int().min(1).max(40).default(24),
+  sort: z.enum(["default", "latest", "oldest"]).default("default"),
   seriesName: z.string().trim().max(120).optional(),
   setId: z.coerce.number().int().positive().optional(),
   rarities: z.array(z.string().trim().max(50)).optional(),
@@ -117,6 +125,45 @@ export function parseCollectionFormInput(raw: unknown):
       ...rest,
       memo: emptyToUndefined(memo),
       acquiredAt: emptyToUndefined(acquiredAt),
+    },
+  };
+}
+
+export function parseBulkCollectionFormInput(raw: unknown):
+  | {
+      success: true;
+      data: UpdateOwnedCardInput & { cardIds: number[] };
+    }
+  | { success: false; formError: string; fieldErrors: CollectionFieldErrors } {
+  const parsed = bulkCollectionFormSchema.safeParse(raw);
+
+  if (!parsed.success) {
+    const flattened = parsed.error.flatten().fieldErrors;
+    const fieldErrors = Object.fromEntries(
+      Object.entries(flattened)
+        .filter((entry): entry is [keyof CollectionFieldErrors, string[]] => entry[0] !== "cardIds" && entry[1] !== undefined)
+        .map(([key, value]) => [key, value[0] ?? "입력값을 확인해 주세요."]),
+    ) as CollectionFieldErrors;
+
+    return {
+      success: false,
+      formError:
+        flattened.cardIds?.[0] ??
+        parsed.error.issues[0]?.message ??
+        "입력값을 다시 확인해 주세요.",
+      fieldErrors,
+    };
+  }
+
+  const { memo, acquiredAt, cardIds, ...rest } = parsed.data;
+
+  return {
+    success: true,
+    data: {
+      ...rest,
+      memo: emptyToUndefined(memo),
+      acquiredAt: emptyToUndefined(acquiredAt),
+      cardIds: [...new Set(cardIds)],
     },
   };
 }

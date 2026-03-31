@@ -19,12 +19,14 @@ import {
 import {
   CARD_CONDITION_LABELS,
   CARD_TYPE_LABELS,
+  type CatalogSortOrder,
   type CardMaster,
   type CardRarityMeta,
   type CardSeriesSummary,
   type CardSetSummary,
   type OwnedCardItem,
   type OwnedCardSnapshot,
+  type OwnedCardSortOrder,
   type PaginatedResult,
 } from "@/lib/cards/types";
 
@@ -47,6 +49,7 @@ type UserCollectionResponse = {
 
 type CollectionViewMode = "detail" | "compact";
 type CatalogViewMode = "detail" | "compact";
+type OwnedCardSortBase = "registered" | "release";
 type LightboxState = {
   alt: string;
   imageSrc: string;
@@ -54,8 +57,26 @@ type LightboxState = {
   title: string;
 };
 
-const CATALOG_PAGE_SIZE = 12;
+const CATALOG_PAGE_SIZE = 24;
 const LAST_ACTIVE_USER_ID_STORAGE_KEY = "pokelist:last-active-user-id";
+
+function summarizeSelectedCatalogCards(cards: CardMaster[]) {
+  if (cards.length === 0) {
+    return "선택한 카드가 없습니다.";
+  }
+
+  if (cards.length === 1) {
+    return `${cards[0].cardNameKo} · ${cards[0].set.setNameKo}`;
+  }
+
+  const names = cards.slice(0, 3).map((card) => card.cardNameKo).join(", ");
+
+  if (cards.length <= 3) {
+    return names;
+  }
+
+  return `${names} 외 ${cards.length - 3}장`;
+}
 
 function matchesCollectionQuery(item: OwnedCardItem, query: string) {
   if (!query) {
@@ -79,6 +100,91 @@ function matchesCollectionQuery(item: OwnedCardItem, query: string) {
 
 function sortCards(cards: OwnedCardItem[]) {
   return [...cards].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function compareNullableDates(
+  left: string | null | undefined,
+  right: string | null | undefined,
+  ascending: boolean,
+) {
+  if (left && right && left !== right) {
+    return ascending ? left.localeCompare(right) : right.localeCompare(left);
+  }
+
+  if (left && !right) {
+    return -1;
+  }
+
+  if (!left && right) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function compareOwnedCards(
+  left: OwnedCardItem,
+  right: OwnedCardItem,
+  sortOrder: OwnedCardSortOrder,
+) {
+  if (sortOrder === "registered_latest") {
+    const createdDiff = right.createdAt.localeCompare(left.createdAt);
+
+    if (createdDiff !== 0) {
+      return createdDiff;
+    }
+  }
+
+  if (sortOrder === "registered_oldest") {
+    const createdDiff = left.createdAt.localeCompare(right.createdAt);
+
+    if (createdDiff !== 0) {
+      return createdDiff;
+    }
+  }
+
+  if (sortOrder === "release_latest" || sortOrder === "release_oldest") {
+    const releaseDiff = compareNullableDates(
+      left.card.releaseDate,
+      right.card.releaseDate,
+      sortOrder === "release_oldest",
+    );
+
+    if (releaseDiff !== 0) {
+      return releaseDiff;
+    }
+
+    const createdDiff =
+      sortOrder === "release_oldest"
+        ? left.createdAt.localeCompare(right.createdAt)
+        : right.createdAt.localeCompare(left.createdAt);
+
+    if (createdDiff !== 0) {
+      return createdDiff;
+    }
+  }
+
+  return left.id.localeCompare(right.id, "ko-KR");
+}
+
+function sortOwnedCards(cards: OwnedCardItem[], sortOrder: OwnedCardSortOrder) {
+  return [...cards].sort((left, right) => compareOwnedCards(left, right, sortOrder));
+}
+
+function getOwnedCardSortBase(sortOrder: OwnedCardSortOrder): OwnedCardSortBase {
+  return sortOrder.startsWith("release_") ? "release" : "registered";
+}
+
+function isOwnedCardSortLatest(sortOrder: OwnedCardSortOrder) {
+  return sortOrder.endsWith("_latest");
+}
+
+function buildOwnedCardSortOrder(base: OwnedCardSortBase, latestFirst: boolean): OwnedCardSortOrder {
+  if (base === "release") {
+    return latestFirst ? "release_latest" : "release_oldest";
+  }
+
+  return latestFirst ? "registered_latest" : "registered_oldest";
 }
 
 function upsertOwnedItem(cards: OwnedCardItem[], nextItem: OwnedCardItem) {
@@ -280,12 +386,16 @@ export function CardListApp({
   const [editingCard, setEditingCard] = useState<OwnedCardItem | null>(null);
   const [inspectCard, setInspectCard] = useState<OwnedCardItem | null>(null);
   const [selectedMaster, setSelectedMaster] = useState<CardMaster | null>(null);
+  const [isCatalogSelectionMode, setIsCatalogSelectionMode] = useState(false);
+  const [selectedCatalogCards, setSelectedCatalogCards] = useState<CardMaster[]>([]);
+  const [isBulkCreateOpen, setIsBulkCreateOpen] = useState(false);
   const [lightboxState, setLightboxState] = useState<LightboxState | null>(null);
   const [catalogQuery, setCatalogQuery] = useState("");
   const [catalogResults, setCatalogResults] = useState<CardMaster[]>([]);
   const [catalogPage, setCatalogPage] = useState(1);
   const [catalogTotalPages, setCatalogTotalPages] = useState(1);
   const [catalogTotalCount, setCatalogTotalCount] = useState(0);
+  const [catalogSortOrder, setCatalogSortOrder] = useState<CatalogSortOrder>("latest");
   const [seriesOptions, setSeriesOptions] = useState<CardSeriesSummary[]>([]);
   const [selectedSeriesName, setSelectedSeriesName] = useState("");
   const [setOptions, setSetOptions] = useState<CardSetSummary[]>([]);
@@ -295,6 +405,7 @@ export function CardListApp({
   const [catalogViewMode, setCatalogViewMode] = useState<CatalogViewMode>("detail");
   const [catalogShowOwnershipState, setCatalogShowOwnershipState] = useState(false);
   const [collectionQuery, setCollectionQuery] = useState("");
+  const [collectionSortOrder, setCollectionSortOrder] = useState<OwnedCardSortOrder>("registered_latest");
   const [collectionViewMode, setCollectionViewMode] = useState<CollectionViewMode>("detail");
   const [collectionOnlyMultiOwned, setCollectionOnlyMultiOwned] = useState(false);
   const [selectedCollectionRarity, setSelectedCollectionRarity] = useState("");
@@ -323,11 +434,19 @@ export function CardListApp({
   const ownedCatalogCardIds = canManageActiveCollection
     ? [...new Set(cards.map((card) => card.card.cardId))]
     : [];
+  const highlightedCatalogCardIds = [...new Set(
+    [
+      selectedMaster?.id,
+      ...selectedCatalogCards.map((card) => card.id),
+    ].filter((cardId): cardId is number => typeof cardId === "number"),
+  )];
 
   const searchedCards = cards.filter((card) => matchesCollectionQuery(card, deferredQuery));
   const collectionSetOptions = getOwnedSetOptions(searchedCards);
   const collectionRarityOptions = getOwnedRarityOptions(searchedCards, rarityOptions);
-  const visibleCards = searchedCards.filter((card) => {
+  const collectionSortBase = getOwnedCardSortBase(collectionSortOrder);
+  const collectionSortLatestFirst = isOwnedCardSortLatest(collectionSortOrder);
+  const visibleCards = sortOwnedCards(searchedCards.filter((card) => {
     if (collectionOnlyMultiOwned && card.quantity < 2) {
       return false;
     }
@@ -351,7 +470,7 @@ export function CardListApp({
     }
 
     return true;
-  });
+  }), collectionSortOrder);
   const totalQuantity = cards.reduce((sum, card) => sum + card.quantity, 0);
   const uniqueSets = new Set(cards.map((card) => card.card.setNameKo)).size;
 
@@ -362,6 +481,9 @@ export function CardListApp({
     setEditingCard(null);
     setInspectCard(null);
     setSelectedMaster(null);
+    setIsCatalogSelectionMode(false);
+    setSelectedCatalogCards([]);
+    setIsBulkCreateOpen(false);
     setCollectionOnlyMultiOwned(false);
     setSelectedCollectionRarity("");
     setSelectedCollectionSet("");
@@ -560,6 +682,22 @@ export function CardListApp({
       setSelectedCollectionSet("");
     }
   }, [collectionSetOptions, selectedCollectionSet]);
+
+  useEffect(() => {
+    if (canManageActiveCollection) {
+      return;
+    }
+
+    setIsCatalogSelectionMode(false);
+    setSelectedCatalogCards([]);
+    setIsBulkCreateOpen(false);
+  }, [canManageActiveCollection]);
+
+  useEffect(() => {
+    if (isBulkCreateOpen && selectedCatalogCards.length === 0) {
+      setIsBulkCreateOpen(false);
+    }
+  }, [isBulkCreateOpen, selectedCatalogCards.length]);
 
   useEffect(() => {
     if (!isCatalogMode || !pendingCatalogScrollRef.current || isSearchingCatalog) {
@@ -832,6 +970,7 @@ export function CardListApp({
     nextSeriesName = selectedSeriesName || undefined,
     nextSet = selectedSet,
     nextRarity = selectedRarity,
+    nextSortOrder = catalogSortOrder,
     raritySourceOptions = rarityOptions,
   ) {
     setIsSearchingCatalog(true);
@@ -842,6 +981,7 @@ export function CardListApp({
         q: catalogQuery,
         page: String(page),
         pageSize: String(CATALOG_PAGE_SIZE),
+        sort: nextSortOrder,
       });
 
       if (nextSeriesName) {
@@ -916,6 +1056,7 @@ export function CardListApp({
       nextSeriesName || undefined,
       null,
       nextRarity,
+      catalogSortOrder,
       nextRarityOptions ?? rarityOptions,
     );
   }
@@ -936,6 +1077,7 @@ export function CardListApp({
         selectedSeriesName || undefined,
         null,
         nextRarity,
+        catalogSortOrder,
         nextRarityOptions ?? rarityOptions,
       );
       return;
@@ -963,6 +1105,7 @@ export function CardListApp({
       selectedSeriesName || undefined,
       nextSet,
       nextRarity,
+      catalogSortOrder,
       nextRarityOptions ?? rarityOptions,
     );
   }
@@ -983,8 +1126,80 @@ export function CardListApp({
       selectedSeriesName || undefined,
       selectedSet,
       nextRarity,
+      catalogSortOrder,
       nextRarityOptions ?? rarityOptions,
     );
+  }
+
+  function handleCatalogSortChange(nextSortOrder: CatalogSortOrder) {
+    setCatalogSortOrder(nextSortOrder);
+    setSelectedMaster(null);
+    resetCatalogResults();
+    void searchCatalog(
+      1,
+      selectedSeriesName || undefined,
+      selectedSet,
+      selectedRarity,
+      nextSortOrder,
+      rarityOptions,
+    );
+  }
+
+  function toggleCatalogSortOrder() {
+    handleCatalogSortChange(catalogSortOrder === "oldest" ? "latest" : "oldest");
+  }
+
+  function toggleCatalogSelectionMode() {
+    setSelectedMaster(null);
+    setSubmitError(null);
+    setSuccessMessage(null);
+
+    setIsCatalogSelectionMode((current) => {
+      const next = !current;
+
+      if (!next) {
+        setSelectedCatalogCards([]);
+        setIsBulkCreateOpen(false);
+      }
+
+      return next;
+    });
+  }
+
+  function toggleSelectedCatalogCard(card: CardMaster) {
+    setSelectedCatalogCards((current) => {
+      const exists = current.some((selectedCard) => selectedCard.id === card.id);
+
+      if (exists) {
+        return current.filter((selectedCard) => selectedCard.id !== card.id);
+      }
+
+      return [...current, card];
+    });
+  }
+
+  function selectAllVisibleCatalogCards(nextCards: CardMaster[]) {
+    setSelectedCatalogCards((current) => {
+      const cardsById = new Map(current.map((card) => [card.id, card]));
+
+      for (const card of nextCards) {
+        cardsById.set(card.id, card);
+      }
+
+      return [...cardsById.values()];
+    });
+  }
+
+  function clearSelectedCatalogCards() {
+    setSelectedCatalogCards([]);
+  }
+
+  function handleCollectionSortBaseChange(nextBase: OwnedCardSortBase) {
+    setCollectionSortOrder(buildOwnedCardSortOrder(nextBase, collectionSortLatestFirst));
+  }
+
+  function toggleCollectionSortOrder() {
+    setCollectionSortOrder(buildOwnedCardSortOrder(collectionSortBase, !collectionSortLatestFirst));
   }
 
   function handleCatalogSearch(page = 1) {
@@ -993,7 +1208,82 @@ export function CardListApp({
       scrollToCatalogTop();
     }
 
-    void searchCatalog(page, selectedSeriesName || undefined, selectedSet, selectedRarity, rarityOptions);
+    void searchCatalog(
+      page,
+      selectedSeriesName || undefined,
+      selectedSet,
+      selectedRarity,
+      catalogSortOrder,
+      rarityOptions,
+    );
+  }
+
+  async function handleBulkSubmit(values: CollectionFormValues) {
+    const writeBlockedMessage = getWriteBlockedMessage();
+
+    if (writeBlockedMessage) {
+      setSubmitError(writeBlockedMessage);
+      return false;
+    }
+
+    const targetUserId = activeUserId;
+
+    if (!targetUserId) {
+      setSubmitError("먼저 사용자 ID를 입력하고 목록을 불러와 주세요.");
+      return false;
+    }
+
+    if (selectedCatalogCards.length === 0) {
+      setSubmitError("일괄 등록할 카드를 먼저 선택해 주세요.");
+      return false;
+    }
+
+    setSubmitError(null);
+    setSuccessMessage(null);
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch(
+        `/api/users/${encodeURIComponent(targetUserId)}/collection/bulk`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            ...values,
+            cardIds: selectedCatalogCards.map((card) => card.id),
+          }),
+        },
+      );
+      const result = (await response.json()) as ApiResponse<OwnedCardItem[]>;
+
+      if (!response.ok || !result.data) {
+        throw new Error(result.error ?? "일괄 저장 처리에 실패했습니다.");
+      }
+
+      const savedItems = result.data;
+
+      setCards((current) => {
+        let nextCards = current;
+
+        for (const item of savedItems) {
+          nextCards = upsertOwnedItem(nextCards, item);
+        }
+
+        return nextCards;
+      });
+      setIsBulkCreateOpen(false);
+      setIsCatalogSelectionMode(false);
+      setSelectedCatalogCards([]);
+      setSuccessMessage(`${savedItems.length}장을 내 카드 목록에 저장했습니다.`);
+      return true;
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "일괄 저장 처리에 실패했습니다.");
+      return false;
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   async function submitToApi(
@@ -1189,7 +1479,7 @@ export function CardListApp({
       {isCatalogMode ? (
         <>
           <section className="panel" ref={catalogPanelRef}>
-            {submitError && !selectedMaster ? (
+            {submitError && !selectedMaster && !isBulkCreateOpen ? (
               <div className="alert alert-error">{submitError}</div>
             ) : null}
             {successMessage ? <div className="alert alert-success">{successMessage}</div> : null}
@@ -1199,7 +1489,9 @@ export function CardListApp({
               pending={isSearchingCatalog}
               results={catalogResults}
               viewMode={catalogViewMode}
-              selectedCardId={selectedMaster?.id ?? null}
+              selectedCardIds={highlightedCatalogCardIds}
+              selectionMode={isCatalogSelectionMode}
+              selectedCount={selectedCatalogCards.length}
               seriesOptions={seriesOptions}
               selectedSeriesName={selectedSeriesName}
               seriesPending={isLoadingSeries}
@@ -1208,6 +1500,7 @@ export function CardListApp({
               setPending={isLoadingSets}
               rarityOptions={rarityOptions}
               selectedRarity={selectedRarity}
+              selectedSortOrder={catalogSortOrder}
               ownedCardIds={ownedCatalogCardIds}
               showOwnershipState={canManageActiveCollection && catalogShowOwnershipState}
               showOwnershipStateToggle={canManageActiveCollection}
@@ -1229,7 +1522,18 @@ export function CardListApp({
               onSearch={() => handleCatalogSearch(1)}
               onPageChange={handleCatalogSearch}
               onViewModeChange={setCatalogViewMode}
+              onSortOrderToggle={toggleCatalogSortOrder}
               onOwnershipStateEnabledChange={setCatalogShowOwnershipState}
+              onSelectionModeToggle={toggleCatalogSelectionMode}
+              onToggleCardSelection={toggleSelectedCatalogCard}
+              onSelectAllVisibleResults={selectAllVisibleCatalogCards}
+              onClearSelection={clearSelectedCatalogCards}
+              onOpenBulkCreate={() => {
+                setSelectedMaster(null);
+                setSubmitError(null);
+                setSuccessMessage(null);
+                setIsBulkCreateOpen(true);
+              }}
               onSeriesChange={(seriesName) => {
                 void handleSeriesChange(seriesName);
               }}
@@ -1251,6 +1555,81 @@ export function CardListApp({
               }}
             />
           </section>
+
+          {isBulkCreateOpen ? (
+            <div
+              className="form-dialog-backdrop"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="catalog-bulk-save-dialog-title"
+              onClick={() => {
+                setIsBulkCreateOpen(false);
+                setSubmitError(null);
+              }}
+            >
+              <div className="form-dialog-panel" onClick={(event) => event.stopPropagation()}>
+                <div className="form-dialog-header">
+                  <div>
+                    <span className="form-dialog-eyebrow">내 카드 일괄 추가</span>
+                    <h2 id="catalog-bulk-save-dialog-title">
+                      카드 {selectedCatalogCards.length}장 일괄 등록
+                    </h2>
+                    <p>{summarizeSelectedCatalogCards(selectedCatalogCards)}</p>
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    type="button"
+                    onClick={() => {
+                      setIsBulkCreateOpen(false);
+                      setSubmitError(null);
+                    }}
+                  >
+                    닫기
+                  </button>
+                </div>
+
+                <div className="form-dialog-layout">
+                  <div className="form-dialog-preview">
+                    <div className="detail-field-list">
+                      {selectedCatalogCards.slice(0, 6).map((card) => (
+                        <div className="detail-field" key={card.id}>
+                          <span>{card.set.setNameKo}</span>
+                          <strong>
+                            {card.cardNameKo} · {card.cardNo}
+                          </strong>
+                        </div>
+                      ))}
+                    </div>
+
+                    {selectedCatalogCards.length > 6 ? (
+                      <p className="form-dialog-copy">
+                        외 {selectedCatalogCards.length - 6}장은 같은 값으로 함께 저장됩니다.
+                      </p>
+                    ) : null}
+                  </div>
+
+                  <div className="form-dialog-form">
+                    <OwnedCardForm
+                      key={`bulk-form-${selectedCatalogCards.length}`}
+                      mode="create"
+                      title={`${selectedCatalogCards.length}장 선택`}
+                      subtitle={summarizeSelectedCatalogCards(selectedCatalogCards)}
+                      initialValues={emptyCollectionFormValues}
+                      activeUserId={activeUserId}
+                      pending={isSubmitting}
+                      serverError={submitError}
+                      cancelLabel="닫기"
+                      onCancel={() => {
+                        setIsBulkCreateOpen(false);
+                        setSubmitError(null);
+                      }}
+                      onSubmit={handleBulkSubmit}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {selectedMaster ? (
             <div
@@ -1448,6 +1827,20 @@ export function CardListApp({
                   </div>
 
                   <div className="field">
+                    <label htmlFor="collectionSortBase">정렬 기준</label>
+                    <select
+                      id="collectionSortBase"
+                      value={collectionSortBase}
+                      onChange={(event) =>
+                        handleCollectionSortBaseChange(event.target.value as OwnedCardSortBase)
+                      }
+                    >
+                      <option value="registered">등록순</option>
+                      <option value="release">카드 출시순</option>
+                    </select>
+                  </div>
+
+                  <div className="field">
                     <label htmlFor="collectionSetFilter">카드 세트</label>
                     <select
                       id="collectionSetFilter"
@@ -1461,6 +1854,18 @@ export function CardListApp({
                         </option>
                       ))}
                     </select>
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="collectionSortToggle">정렬 방향</label>
+                    <button
+                      id="collectionSortToggle"
+                      className="sort-toggle-button"
+                      type="button"
+                      onClick={toggleCollectionSortOrder}
+                    >
+                      {collectionSortLatestFirst ? "최신순" : "오래된순"}
+                    </button>
                   </div>
                 </div>
               </div>

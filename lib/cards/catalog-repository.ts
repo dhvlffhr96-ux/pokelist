@@ -1,6 +1,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin-client";
 import type { Database } from "@/lib/supabase/database.types";
 import type {
+  CatalogSortOrder,
   CardMaster,
   CardRarityMeta,
   CardSeriesSummary,
@@ -347,6 +348,18 @@ function compareRankedRows(left: SearchRankingRow, right: SearchRankingRow, quer
   return left.id - right.id;
 }
 
+function applyCardSearchSort<T extends { order: (...args: any[]) => T }>(
+  request: T,
+  sort: CatalogSortOrder,
+) {
+  const ascending = sort === "oldest";
+
+  return request
+    .order("card_sets(release_date)", { ascending, nullsFirst: false })
+    .order("card_sets(set_name_ko)", { ascending: true })
+    .order("card_no", { ascending: true });
+}
+
 function mapRowToMaster(row: CatalogSearchRow): CardMaster {
   if (!row.card_sets) {
     throw new Error(`카드 ${row.id}에 연결된 세트 정보가 없습니다.`);
@@ -622,6 +635,7 @@ export class CatalogRepository {
     query,
     page,
     pageSize,
+    sort,
     seriesName,
     setId,
     rarities,
@@ -629,6 +643,7 @@ export class CatalogRepository {
     query: string;
     page: number;
     pageSize: number;
+    sort: CatalogSortOrder;
     seriesName?: string;
     setId?: number;
     rarities?: string[];
@@ -703,16 +718,13 @@ export class CatalogRepository {
     const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
     const safePage = Math.min(page, totalPages);
 
-    if (!sanitizedQuery) {
+    if (!sanitizedQuery || sort !== "default") {
       const startIndex = (safePage - 1) * pageSize;
       const endIndex = startIndex + pageSize - 1;
-      const { data, error } = await buildDataRequest()
-        .order("card_sets(release_date)", { ascending: false, nullsFirst: false })
-        .order("card_sets(set_name_ko)", { ascending: true })
-        .order("card_no", {
-          ascending: true,
-        })
-        .range(startIndex, endIndex);
+      const { data, error } = await applyCardSearchSort(
+        buildDataRequest(),
+        sort === "default" ? "latest" : sort,
+      ).range(startIndex, endIndex);
 
       if (error) {
         throw new Error(`카드 마스터 조회 실패: ${error.message}`);
@@ -801,5 +813,33 @@ export class CatalogRepository {
     }
 
     return mapRowToMaster(data as CatalogSearchRow);
+  }
+
+  async getCardsByIds(cardIds: number[]) {
+    const uniqueCardIds = [...new Set(cardIds)];
+
+    if (uniqueCardIds.length === 0) {
+      return [];
+    }
+
+    const supabase = createSupabaseAdminClient();
+    const { data, error } = await supabase
+      .from("cards")
+      .select(MASTER_SELECT)
+      .in("id", uniqueCardIds)
+      .eq("game", "pokemon")
+      .eq("language", "ko")
+      .eq("is_active", true);
+
+    if (error) {
+      throw new Error(`카드 마스터 다건 조회 실패: ${error.message}`);
+    }
+
+    const rowsById = new Map((data as CatalogSearchRow[]).map((row) => [row.id, row]));
+
+    return uniqueCardIds
+      .map((cardId) => rowsById.get(cardId))
+      .filter((row): row is CatalogSearchRow => Boolean(row))
+      .map(mapRowToMaster);
   }
 }

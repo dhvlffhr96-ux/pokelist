@@ -9,6 +9,8 @@ import {
   userIdSchema,
 } from "@/lib/cards/schema";
 import type {
+  BulkCreateOwnedCardInput,
+  CatalogSortOrder,
   CreateOwnedCardInput,
   UpdateOwnedCardInput,
 } from "@/lib/cards/types";
@@ -30,6 +32,7 @@ export async function searchCatalogCards(params: {
   query?: string;
   page?: number;
   pageSize?: number;
+  sort?: CatalogSortOrder;
   seriesName?: string;
   setId?: number;
   rarities?: string[];
@@ -38,6 +41,7 @@ export async function searchCatalogCards(params: {
     q: params.query,
     page: params.page,
     pageSize: params.pageSize,
+    sort: params.sort,
     seriesName: params.seriesName,
     setId: params.setId,
     rarities: params.rarities,
@@ -47,6 +51,7 @@ export async function searchCatalogCards(params: {
     query: parsed.q,
     page: parsed.page,
     pageSize: parsed.pageSize,
+    sort: parsed.sort,
     seriesName: parsed.seriesName,
     setId: parsed.setId,
     rarities: parsed.rarities,
@@ -123,6 +128,17 @@ export async function addOwnedCard(userId: string, input: CreateOwnedCardInput) 
   }
 
   return storageCollectionRepository.upsertOwnedCard(normalizedUserId, card, input);
+}
+
+export async function addOwnedCards(userId: string, input: BulkCreateOwnedCardInput) {
+  const normalizedUserId = userIdSchema.parse(userId);
+  const cards = await catalogRepository.getCardsByIds(input.cardIds);
+
+  if (cards.length !== input.cardIds.length) {
+    throw new Error("선택한 마스터 카드 일부를 찾지 못했습니다.");
+  }
+
+  return storageCollectionRepository.upsertOwnedCards(normalizedUserId, cards, input);
 }
 
 export async function updateOwnedCard(
