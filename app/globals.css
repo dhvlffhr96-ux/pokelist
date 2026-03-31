@@ -1912,6 +1912,12 @@ a {
     flex-direction: column;
   }
 
+  .toolbar .input-with-clear {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+  }
+
   .toolbar input,
   .toolbar button,
   .form-actions button {
