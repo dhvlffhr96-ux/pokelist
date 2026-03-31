@@ -102,20 +102,27 @@ export function OwnedCardDetailDialog({
               </div>
             </button>
 
-            <div className="catalog-card-meta form-dialog-meta">
-              <span>보유 수량 {card.quantity}</span>
-              <span>
-                <span className="card-meta-inline">
-                  상태
-                  <ConditionHelpTooltip />
-                </span>{" "}
-                {CARD_CONDITION_LABELS[card.condition]}
-              </span>
-              <span>구매일 {formatOwnedDate(card.acquiredAt)}</span>
-            </div>
           </div>
 
           <div className="form-dialog-form">
+            <div className="detail-top-summary">
+              <div className="detail-top-summary-item">
+                <span>보유 수량</span>
+                <strong>{card.quantity}</strong>
+              </div>
+              <div className="detail-top-summary-item">
+                <span className="card-meta-inline">
+                  상태
+                  <ConditionHelpTooltip />
+                </span>
+                <strong>{CARD_CONDITION_LABELS[card.condition]}</strong>
+              </div>
+              <div className="detail-top-summary-item">
+                <span>구매일</span>
+                <strong>{formatOwnedDate(card.acquiredAt)}</strong>
+              </div>
+            </div>
+
             <div className="detail-field-list detail-dialog-field-list">
               <div className="detail-field">
                 <span>카드 번호</span>
