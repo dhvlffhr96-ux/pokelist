@@ -5,7 +5,6 @@ import type {
   CardMaster,
   CardRarityMeta,
   CardSeriesSummary,
-  CardSetSummary,
   PaginatedResult,
 } from "@/lib/cards/types";
 
@@ -55,16 +54,6 @@ const MASTER_SELECT = `
     game,
     language
   )
-`;
-
-const SET_SELECT = `
-  id,
-  set_code,
-  set_name_ko,
-  set_name_en,
-  series_name,
-  release_date,
-  total_cards
 `;
 
 const SEARCH_RANKING_SELECT = `
@@ -146,24 +135,22 @@ function sanitizeSearchTerm(query: string) {
   return query.trim().replace(/[,%()]/g, " ").replace(/\s+/g, " ").slice(0, 80);
 }
 
-function usesSeriesJoin(seriesName?: string, setId?: number) {
-  return Boolean(seriesName && !setId);
+function usesSeriesJoin(seriesName?: string) {
+  return Boolean(seriesName);
 }
 
 async function listAllMatchingCardRarityValues({
   seriesName,
-  setId,
   sanitizedQuery,
 }: {
   seriesName?: string;
-  setId?: number;
   sanitizedQuery?: string;
 }) {
   const supabase = createSupabaseAdminClient();
   const pageSize = 1000;
   let offset = 0;
   const rarityValues: string[] = [];
-  const useSeriesJoin = usesSeriesJoin(seriesName, setId);
+  const useSeriesJoin = usesSeriesJoin(seriesName);
 
   while (true) {
     let request = supabase
@@ -175,9 +162,7 @@ async function listAllMatchingCardRarityValues({
       .order("id", { ascending: true })
       .range(offset, offset + pageSize - 1);
 
-    if (setId) {
-      request = request.eq("set_id", setId);
-    } else if (seriesName) {
+    if (seriesName) {
       request = request.eq("card_sets.series_name", seriesName);
     }
 
@@ -396,18 +381,6 @@ function mapRowToMaster(row: CatalogSearchRow): CardMaster {
   };
 }
 
-function mapSetRow(row: CardSetRow): CardSetSummary {
-  return {
-    id: row.id,
-    setCode: row.set_code,
-    setNameKo: row.set_name_ko,
-    setNameEn: row.set_name_en,
-    seriesName: row.series_name,
-    releaseDate: row.release_date,
-    totalCards: row.total_cards,
-  };
-}
-
 function mapRarityMetaRow(row: CardRarityMetaRow): CardRarityMeta {
   return {
     filterKey: row.rarity_code?.trim() || row.rarity_name,
@@ -567,44 +540,16 @@ export class CatalogRepository {
     return series.slice(0, limit);
   }
 
-  async searchCardSets(seriesName: string | undefined, limit: number) {
-    const supabase = createSupabaseAdminClient();
-
-    let request = supabase
-      .from("card_sets")
-      .select(SET_SELECT)
-      .eq("game", "pokemon")
-      .eq("language", "ko")
-      .eq("is_active", true)
-      .order("release_date", { ascending: true, nullsFirst: false })
-      .order("id", { ascending: true })
-      .limit(limit);
-
-    if (seriesName) {
-      request = request.eq("series_name", seriesName);
-    }
-
-    const { data, error } = await request;
-
-    if (error) {
-      throw new Error(`카드 세트 조회 실패: ${error.message}`);
-    }
-
-    return (data as CardSetRow[]).map(mapSetRow);
-  }
-
   async listCardRarities({
     query,
     seriesName,
-    setId,
   }: {
     query?: string;
     seriesName?: string;
-    setId?: number;
   }) {
     const sanitizedQuery = sanitizeSearchTerm(query ?? "");
 
-    if (!sanitizedQuery && !seriesName && !setId) {
+    if (!sanitizedQuery && !seriesName) {
       return this.listCardRarityMeta();
     }
 
@@ -612,7 +557,6 @@ export class CatalogRepository {
       await Promise.all([
         listAllMatchingCardRarityValues({
           seriesName,
-          setId,
           sanitizedQuery,
         }),
         this.listCardRarityMeta(),
@@ -623,7 +567,7 @@ export class CatalogRepository {
     );
 
     if (availableRarityValues.size === 0) {
-      return sanitizedQuery || seriesName || setId ? [] : grouped;
+      return sanitizedQuery || seriesName ? [] : grouped;
     }
 
     return grouped.filter((rarity) =>
@@ -637,7 +581,6 @@ export class CatalogRepository {
     pageSize,
     sort,
     seriesName,
-    setId,
     rarities,
   }: {
     query: string;
@@ -645,12 +588,11 @@ export class CatalogRepository {
     pageSize: number;
     sort: CatalogSortOrder;
     seriesName?: string;
-    setId?: number;
     rarities?: string[];
   }): Promise<PaginatedResult<CardMaster>> {
     const supabase = createSupabaseAdminClient();
     const sanitizedQuery = sanitizeSearchTerm(query);
-    const useSeriesJoin = usesSeriesJoin(seriesName, setId);
+    const useSeriesJoin = usesSeriesJoin(seriesName);
 
     const applyCommonFilters = <T>(request: T) => {
       let nextRequest = (request as any)
@@ -658,9 +600,7 @@ export class CatalogRepository {
         .eq("language", "ko")
         .eq("is_active", true);
 
-      if (setId) {
-        nextRequest = nextRequest.eq("set_id", setId);
-      } else if (seriesName) {
+      if (seriesName) {
         nextRequest = nextRequest.eq("card_sets.series_name", seriesName);
       }
 

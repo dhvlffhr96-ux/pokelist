@@ -1,5 +1,6 @@
 "use client";
 
+import { ConditionHelpTooltip } from "@/components/condition-help-tooltip";
 import {
   CARD_CONDITION_LABELS,
   CARD_TYPE_LABELS,
@@ -28,6 +29,10 @@ function getPreviewImageSrc(card: OwnedCardItem) {
   return card.card.imageUrl ?? card.card.thumbnailUrl;
 }
 
+function getSeriesLabel(card: OwnedCardItem) {
+  return card.card.seriesName?.trim() || card.card.setNameKo?.trim() || "시리즈 없음";
+}
+
 export function OwnedCardDetailDialog({
   card,
   editable = false,
@@ -45,13 +50,16 @@ export function OwnedCardDetailDialog({
       aria-labelledby="owned-card-detail-dialog-title"
       onClick={onClose}
     >
-      <div className="form-dialog-panel" onClick={(event) => event.stopPropagation()}>
+      <div
+        className="form-dialog-panel detail-dialog-panel"
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className="form-dialog-header">
           <div>
             <span className="form-dialog-eyebrow">카드 상세 정보</span>
             <h2 id="owned-card-detail-dialog-title">{card.card.cardNameKo}</h2>
             <p>
-              {card.card.setNameKo} · {card.card.cardNo}
+              {getSeriesLabel(card)} · {card.card.cardNo}
             </p>
           </div>
           <div className="detail-dialog-actions">
@@ -72,8 +80,8 @@ export function OwnedCardDetailDialog({
           </div>
         </div>
 
-        <div className="form-dialog-layout">
-          <div className="form-dialog-preview">
+        <div className="form-dialog-layout detail-dialog-layout">
+          <div className="form-dialog-preview detail-dialog-preview">
             <button
               className="form-dialog-image-button"
               type="button"
@@ -96,22 +104,19 @@ export function OwnedCardDetailDialog({
 
             <div className="catalog-card-meta form-dialog-meta">
               <span>보유 수량 {card.quantity}</span>
-              <span>상태 {CARD_CONDITION_LABELS[card.condition]}</span>
+              <span>
+                <span className="card-meta-inline">
+                  상태
+                  <ConditionHelpTooltip />
+                </span>{" "}
+                {CARD_CONDITION_LABELS[card.condition]}
+              </span>
               <span>구매일 {formatOwnedDate(card.acquiredAt)}</span>
             </div>
-
-            <p className="form-dialog-copy">
-              이미지를 누르면 크게 볼 수 있습니다. 이 카드의 보유 정보와 카드 마스터
-              요약을 함께 확인합니다.
-            </p>
           </div>
 
           <div className="form-dialog-form">
-            <div className="detail-field-list">
-              <div className="detail-field">
-                <span>세트</span>
-                <strong>{card.card.setNameKo}</strong>
-              </div>
+            <div className="detail-field-list detail-dialog-field-list">
               <div className="detail-field">
                 <span>카드 번호</span>
                 <strong>{card.card.cardNo}</strong>
@@ -130,7 +135,7 @@ export function OwnedCardDetailDialog({
               </div>
               <div className="detail-field">
                 <span>시리즈</span>
-                <strong>{card.card.seriesName ?? "없음"}</strong>
+                <strong>{getSeriesLabel(card)}</strong>
               </div>
               <div className="detail-field detail-field-full">
                 <span>메모</span>

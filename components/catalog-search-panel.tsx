@@ -7,25 +7,21 @@ import {
   type CardMaster,
   type CardRarityMeta,
   type CardSeriesSummary,
-  type CardSetSummary,
 } from "@/lib/cards/types";
 
 type CatalogSearchPanelProps = {
   query: string;
   pending: boolean;
   seriesPending: boolean;
-  setPending: boolean;
   rarityPending: boolean;
   results: CardMaster[];
   viewMode: "detail" | "compact";
   seriesOptions: CardSeriesSummary[];
-  setOptions: CardSetSummary[];
   rarityOptions: CardRarityMeta[];
   selectedCardIds: number[];
   selectionMode: boolean;
   selectedCount: number;
   selectedSeriesName: string;
-  selectedSetId: number | null;
   selectedRarity: string;
   selectedSortOrder: CatalogSortOrder;
   ownedCardIds: number[];
@@ -34,7 +30,6 @@ type CatalogSearchPanelProps = {
   ownershipStateEnabled: boolean;
   error?: string | null;
   seriesError?: string | null;
-  setError?: string | null;
   rarityError?: string | null;
   page: number;
   pageSize: number;
@@ -56,13 +51,16 @@ type CatalogSearchPanelProps = {
   onClearSelection: () => void;
   onOpenBulkCreate: () => void;
   onSeriesChange: (seriesName: string) => void;
-  onSetChange: (setId: string) => void;
   onRarityChange: (rarity: string) => void;
   onSelect: (card: CardMaster) => void;
 };
 
 function getPreviewImageSrc(card: CardMaster) {
   return card.thumbnailUrl ?? card.imageUrl;
+}
+
+function getSeriesLabel(card: CardMaster) {
+  return card.set.seriesName?.trim() || "시리즈 없음";
 }
 
 function getRarityLabel(rarity: CardRarityMeta) {
@@ -79,8 +77,7 @@ function matchesResultFilter(card: CardMaster, query: string) {
     card.cardNameKo,
     card.cardNameEn ?? "",
     card.cardNameJp ?? "",
-    card.set.setNameKo,
-    card.set.setNameEn ?? "",
+    card.set.seriesName ?? "",
     card.cardNo,
     card.localCode ?? "",
     card.rarity,
@@ -96,18 +93,15 @@ export function CatalogSearchPanel({
   query,
   pending,
   seriesPending,
-  setPending,
   rarityPending,
   results,
   viewMode,
   seriesOptions,
-  setOptions,
   rarityOptions,
   selectedCardIds,
   selectionMode,
   selectedCount,
   selectedSeriesName,
-  selectedSetId,
   selectedRarity,
   selectedSortOrder,
   ownedCardIds,
@@ -116,7 +110,6 @@ export function CatalogSearchPanel({
   ownershipStateEnabled,
   error,
   seriesError,
-  setError,
   rarityError,
   page,
   pageSize,
@@ -138,7 +131,6 @@ export function CatalogSearchPanel({
   onClearSelection,
   onOpenBulkCreate,
   onSeriesChange,
-  onSetChange,
   onRarityChange,
   onSelect,
 }: CatalogSearchPanelProps) {
@@ -151,12 +143,12 @@ export function CatalogSearchPanel({
   return (
     <>
       <div className="panel-stack">
-        <div className="panel-header">
+          <div className="panel-header">
           <div>
             <h2>카드 검색</h2>
             <p>
-              카드명, 카드번호, 코드 기준으로 원하는 카드를 찾을 수 있습니다. 카드를
-              누르면 바로 추가 창이 열리고, 사진은 따로 크게 볼 수 있습니다.
+              카드명, 카드번호, 코드 기준으로 원하는 카드를 찾을 수 있습니다. 시리즈만
+              골라서 좁혀 볼 수 있고, 카드를 누르면 바로 추가 창이 열립니다.
             </p>
           </div>
           <span className="storage-pill">카탈로그</span>
@@ -224,30 +216,6 @@ export function CatalogSearchPanel({
             </div>
 
             <div className="field">
-              <label htmlFor="setNameKo">세트 선택</label>
-              <select
-                id="setNameKo"
-                value={selectedSetId ? String(selectedSetId) : ""}
-                onChange={(event) => onSetChange(event.target.value)}
-                disabled={!selectedSeriesName || setPending}
-              >
-                <option value="">
-                  {!selectedSeriesName
-                    ? "먼저 시리즈를 선택하세요"
-                    : setPending
-                      ? "세트 불러오는 중..."
-                      : "세트를 선택하세요"}
-                </option>
-                {setOptions.map((set) => (
-                  <option key={set.id} value={String(set.id)}>
-                    {set.setNameKo}
-                    {set.setCode ? ` · ${set.setCode}` : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="field">
               <label htmlFor="rarity">레어도</label>
               <select
                 id="rarity"
@@ -281,12 +249,11 @@ export function CatalogSearchPanel({
           </div>
 
           {seriesError ? <div className="alert alert-error">{seriesError}</div> : null}
-          {setError ? <div className="alert alert-error">{setError}</div> : null}
           {rarityError ? <div className="alert alert-error">{rarityError}</div> : null}
 
           <div className="filter-help">
-            시리즈만 골라도 해당 시리즈 카드만 볼 수 있고, 세트까지 선택하면 더 좁혀집니다.
-            레어도는 현재 검색 조건에 맞는 카드들 기준으로 다시 계산됩니다.
+            시리즈 기준으로만 카드를 좁혀 봅니다. 레어도는 현재 검색 조건에 맞는 카드들
+            기준으로 다시 계산됩니다.
           </div>
         </div>
 
@@ -319,7 +286,7 @@ export function CatalogSearchPanel({
                 checked={ownershipStateEnabled}
                 onChange={(event) => onOwnershipStateEnabledChange(event.target.checked)}
               />
-              <span>내 카드 보유 여부 컬러로 보기</span>
+              <span>카드 보유 여부 컬러로 보기</span>
             </label>
           ) : null}
 
@@ -378,7 +345,7 @@ export function CatalogSearchPanel({
               <input
                 value={resultFilter}
                 onChange={(event) => setResultFilter(event.target.value)}
-                placeholder="현재 불러온 결과 안에서 카드명, 세트, 번호, 레어도 필터"
+                placeholder="현재 불러온 결과 안에서 카드명, 시리즈, 번호, 레어도 필터"
               />
               <button
                 className="btn btn-secondary"
@@ -497,7 +464,7 @@ export function CatalogSearchPanel({
                           {card.cardNo} · {card.rarity}
                         </span>
                         <span className="catalog-card-compact-subtitle">
-                          {card.set.setNameKo}
+                          {getSeriesLabel(card)}
                         </span>
                         {showOwnershipState ? (
                           <span className={`catalog-ownership-badge ${isOwned ? "catalog-ownership-badge-owned" : "catalog-ownership-badge-unowned"}`}>
@@ -585,7 +552,7 @@ export function CatalogSearchPanel({
                         <div className="catalog-card-header">
                           <div>
                             <h3>{card.cardNameKo}</h3>
-                            <p>{card.set.setNameKo}</p>
+                            <p>{getSeriesLabel(card)}</p>
                           </div>
                           <div className="catalog-card-header-badges">
                             {showOwnershipState ? (

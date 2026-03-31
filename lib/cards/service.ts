@@ -5,7 +5,6 @@ import {
   catalogQuerySchema,
   catalogRarityQuerySchema,
   catalogSeriesQuerySchema,
-  catalogSetQuerySchema,
   userIdSchema,
 } from "@/lib/cards/schema";
 import type {
@@ -34,7 +33,6 @@ export async function searchCatalogCards(params: {
   pageSize?: number;
   sort?: CatalogSortOrder;
   seriesName?: string;
-  setId?: number;
   rarities?: string[];
 }) {
   const parsed = catalogQuerySchema.parse({
@@ -43,7 +41,6 @@ export async function searchCatalogCards(params: {
     pageSize: params.pageSize,
     sort: params.sort,
     seriesName: params.seriesName,
-    setId: params.setId,
     rarities: params.rarities,
   });
 
@@ -53,18 +50,8 @@ export async function searchCatalogCards(params: {
     pageSize: parsed.pageSize,
     sort: parsed.sort,
     seriesName: parsed.seriesName,
-    setId: parsed.setId,
     rarities: parsed.rarities,
   });
-}
-
-export async function searchCatalogSets(query: string, limit = 10) {
-  const parsed = catalogSetQuerySchema.parse({
-    seriesName: query || undefined,
-    limit,
-  });
-
-  return catalogRepository.searchCardSets(parsed.seriesName, parsed.limit);
 }
 
 export async function listCatalogSeries(limit = 100) {
@@ -76,18 +63,15 @@ export async function listCatalogSeries(limit = 100) {
 export async function listCatalogRarities(params?: {
   query?: string;
   seriesName?: string;
-  setId?: number;
 }) {
   const parsed = catalogRarityQuerySchema.parse({
     q: params?.query,
     seriesName: params?.seriesName,
-    setId: params?.setId,
   });
 
   return catalogRepository.listCardRarities({
     query: parsed.q,
     seriesName: parsed.seriesName,
-    setId: parsed.setId,
   });
 }
 

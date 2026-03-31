@@ -8,6 +8,7 @@ import {
 } from "@/lib/supabase/storage-errors";
 import type {
   BulkCreateOwnedCardInput,
+  CardCondition,
   CardMaster,
   CreateOwnedCardInput,
   OwnedCardItem,
@@ -15,9 +16,13 @@ import type {
   UpdateOwnedCardInput,
   UserCollectionFile,
 } from "@/lib/cards/types";
+import { normalizeStoredCardCondition } from "@/lib/cards/types";
 
 type CardReleaseLookupRow = Pick<Database["public"]["Tables"]["cards"]["Row"], "id"> & {
-  card_sets: Pick<Database["public"]["Tables"]["card_sets"]["Row"], "release_date"> | null;
+  card_sets: Pick<
+    Database["public"]["Tables"]["card_sets"]["Row"],
+    "release_date" | "series_name"
+  > | null;
 };
 
 const cardSnapshotSchema = z.object({
@@ -31,8 +36,8 @@ const cardSnapshotSchema = z.object({
   language: z.string(),
   thumbnailUrl: z.string().nullable(),
   imageUrl: z.string().nullable(),
-  setNameKo: z.string(),
-  setCode: z.string().nullable(),
+  setNameKo: z.string().nullable().optional().default(null),
+  setCode: z.string().nullable().optional().default(null),
   seriesName: z.string().nullable(),
   releaseDate: z.string().nullable().optional().default(null),
 });
@@ -41,7 +46,20 @@ const ownedCardItemSchema = z.object({
   id: z.string().uuid(),
   userId: z.string(),
   quantity: z.number().int().min(1).max(999),
-  condition: z.enum(["SEALED", "MINT", "GOOD", "PLAYED"]),
+  condition: z.string().transform((value, ctx): CardCondition => {
+    const normalized = normalizeStoredCardCondition(value);
+
+    if (!normalized) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "지원하지 않는 카드 상태입니다.",
+      });
+
+      return z.NEVER;
+    }
+
+    return normalized;
+  }),
   memo: z.string().nullable(),
   acquiredAt: z.string().nullable(),
   createdAt: z.string(),
@@ -75,8 +93,6 @@ function toCardSnapshot(card: CardMaster): OwnedCardSnapshot {
     language: card.language,
     thumbnailUrl: card.thumbnailUrl,
     imageUrl: card.imageUrl,
-    setNameKo: card.set.setNameKo,
-    setCode: card.set.setCode,
     seriesName: card.set.seriesName,
     releaseDate: card.set.releaseDate,
   };
@@ -104,11 +120,33 @@ function createEmptyCollection(userId: string): UserCollectionFile {
   };
 }
 
+function hasLegacyConditionValues(raw: unknown) {
+  if (!raw || typeof raw !== "object" || !("items" in raw)) {
+    return false;
+  }
+
+  const items = (raw as { items?: unknown }).items;
+
+  if (!Array.isArray(items)) {
+    return false;
+  }
+
+  return items.some((item) => {
+    if (!item || typeof item !== "object" || !("condition" in item)) {
+      return false;
+    }
+
+    const condition = (item as { condition?: unknown }).condition;
+
+    return condition === "MINT" || condition === "GOOD" || condition === "PLAYED";
+  });
+}
+
 export class StorageCollectionRepository {
-  private async backfillLegacyReleaseDates(collection: UserCollectionFile) {
+  private async backfillLegacyCardMetadata(collection: UserCollectionFile) {
     const missingCardIds = [...new Set(
       collection.items
-        .filter((item) => !item.card.releaseDate)
+        .filter((item) => !item.card.releaseDate || !item.card.seriesName)
         .map((item) => item.card.cardId),
     )];
 
@@ -117,7 +155,7 @@ export class StorageCollectionRepository {
     }
 
     const supabase = createSupabaseAdminClient();
-    const releaseDateByCardId = new Map<number, string | null>();
+    const metadataByCardId = new Map<number, { releaseDate: string | null; seriesName: string | null }>();
     const chunkSize = 200;
 
     try {
@@ -128,7 +166,8 @@ export class StorageCollectionRepository {
           .select(`
             id,
             card_sets (
-              release_date
+              release_date,
+              series_name
             )
           `)
           .in("id", chunk);
@@ -138,14 +177,17 @@ export class StorageCollectionRepository {
         }
 
         for (const row of (data as CardReleaseLookupRow[]) ?? []) {
-          releaseDateByCardId.set(row.id, row.card_sets?.release_date ?? null);
+          metadataByCardId.set(row.id, {
+            releaseDate: row.card_sets?.release_date ?? null,
+            seriesName: row.card_sets?.series_name ?? null,
+          });
         }
       }
     } catch {
       return collection;
     }
 
-    if (releaseDateByCardId.size === 0) {
+    if (metadataByCardId.size === 0) {
       return collection;
     }
 
@@ -153,13 +195,23 @@ export class StorageCollectionRepository {
     const nextCollection: UserCollectionFile = {
       ...collection,
       items: sortItems(collection.items.map((item) => {
-        if (item.card.releaseDate) {
+        if (item.card.releaseDate && item.card.seriesName) {
           return item;
         }
 
-        const releaseDate = releaseDateByCardId.get(item.card.cardId) ?? null;
+        const metadata = metadataByCardId.get(item.card.cardId);
 
-        if (!releaseDate) {
+        if (!metadata) {
+          return item;
+        }
+
+        const nextReleaseDate = item.card.releaseDate ?? metadata.releaseDate;
+        const nextSeriesName = item.card.seriesName ?? metadata.seriesName;
+
+        if (
+          nextReleaseDate === item.card.releaseDate &&
+          nextSeriesName === item.card.seriesName
+        ) {
           return item;
         }
 
@@ -169,7 +221,8 @@ export class StorageCollectionRepository {
           ...item,
           card: {
             ...item.card,
-            releaseDate,
+            releaseDate: nextReleaseDate,
+            seriesName: nextSeriesName,
           },
         };
       })),
@@ -231,7 +284,9 @@ export class StorageCollectionRepository {
 
     try {
       const raw = await data.text();
-      const parsed = userCollectionFileSchema.parse(JSON.parse(raw));
+      const parsedJson = JSON.parse(raw);
+      const shouldRewriteLegacyCondition = hasLegacyConditionValues(parsedJson);
+      const parsed = userCollectionFileSchema.parse(parsedJson);
 
       if (parsed.userId !== userId) {
         throw new Error("사용자 ID와 저장된 문서가 일치하지 않습니다.");
@@ -242,7 +297,17 @@ export class StorageCollectionRepository {
         items: sortItems(parsed.items),
       };
 
-      return this.backfillLegacyReleaseDates(normalizedCollection);
+      const hydratedCollection = await this.backfillLegacyCardMetadata(normalizedCollection);
+
+      if (shouldRewriteLegacyCondition) {
+        try {
+          return await this.writeUserCollection(hydratedCollection);
+        } catch {
+          return hydratedCollection;
+        }
+      }
+
+      return hydratedCollection;
     } catch {
       throw new Error("사용자 카드 목록 문서 형식이 올바르지 않습니다.");
     }

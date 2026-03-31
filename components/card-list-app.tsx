@@ -23,7 +23,6 @@ import {
   type CardMaster,
   type CardRarityMeta,
   type CardSeriesSummary,
-  type CardSetSummary,
   type OwnedCardItem,
   type OwnedCardSnapshot,
   type OwnedCardSortOrder,
@@ -60,13 +59,21 @@ type LightboxState = {
 const CATALOG_PAGE_SIZE = 24;
 const LAST_ACTIVE_USER_ID_STORAGE_KEY = "pokelist:last-active-user-id";
 
+function getMasterSeriesLabel(card: CardMaster) {
+  return card.set.seriesName?.trim() || "시리즈 없음";
+}
+
+function getOwnedSeriesLabel(card: OwnedCardSnapshot) {
+  return card.seriesName?.trim() || card.setNameKo?.trim() || "시리즈 없음";
+}
+
 function summarizeSelectedCatalogCards(cards: CardMaster[]) {
   if (cards.length === 0) {
     return "선택한 카드가 없습니다.";
   }
 
   if (cards.length === 1) {
-    return `${cards[0].cardNameKo} · ${cards[0].set.setNameKo}`;
+    return `${cards[0].cardNameKo} · ${getMasterSeriesLabel(cards[0])}`;
   }
 
   const names = cards.slice(0, 3).map((card) => card.cardNameKo).join(", ");
@@ -87,7 +94,7 @@ function matchesCollectionQuery(item: OwnedCardItem, query: string) {
   const searchable = [
     item.card.cardNameKo,
     item.card.cardNameEn ?? "",
-    item.card.setNameKo,
+    item.card.seriesName ?? item.card.setNameKo ?? "",
     item.card.cardNo,
     item.card.localCode ?? "",
     item.memo ?? "",
@@ -209,12 +216,12 @@ function formatOwnedDate(date: string | null) {
   }).format(new Date(date));
 }
 
-function getOwnedSetFilterKey(card: OwnedCardSnapshot) {
-  return `${card.setNameKo}::${card.setCode ?? ""}`;
+function getOwnedSeriesFilterKey(card: OwnedCardSnapshot) {
+  return getOwnedSeriesLabel(card);
 }
 
-function getOwnedSetFilterLabel(card: OwnedCardSnapshot) {
-  return card.setCode ? `${card.setNameKo} · ${card.setCode}` : card.setNameKo;
+function getOwnedSeriesFilterLabel(card: OwnedCardSnapshot) {
+  return getOwnedSeriesLabel(card);
 }
 
 function getRarityFilterLabel(rarity: CardRarityMeta) {
@@ -276,14 +283,14 @@ function findMatchingRarityMeta(rarityValue: string, rarityOptions: CardRarityMe
   );
 }
 
-function getOwnedSetOptions(cards: OwnedCardItem[]) {
+function getOwnedSeriesOptions(cards: OwnedCardItem[]) {
   const grouped = new Map<string, string>();
 
   for (const card of cards) {
-    const key = getOwnedSetFilterKey(card.card);
+    const key = getOwnedSeriesFilterKey(card.card);
 
     if (!grouped.has(key)) {
-      grouped.set(key, getOwnedSetFilterLabel(card.card));
+      grouped.set(key, getOwnedSeriesFilterLabel(card.card));
     }
   }
 
@@ -398,8 +405,6 @@ export function CardListApp({
   const [catalogSortOrder, setCatalogSortOrder] = useState<CatalogSortOrder>("latest");
   const [seriesOptions, setSeriesOptions] = useState<CardSeriesSummary[]>([]);
   const [selectedSeriesName, setSelectedSeriesName] = useState("");
-  const [setOptions, setSetOptions] = useState<CardSetSummary[]>([]);
-  const [selectedSet, setSelectedSet] = useState<CardSetSummary | null>(null);
   const [rarityOptions, setRarityOptions] = useState<CardRarityMeta[]>([]);
   const [selectedRarity, setSelectedRarity] = useState("");
   const [catalogViewMode, setCatalogViewMode] = useState<CatalogViewMode>("detail");
@@ -409,18 +414,16 @@ export function CardListApp({
   const [collectionViewMode, setCollectionViewMode] = useState<CollectionViewMode>("detail");
   const [collectionOnlyMultiOwned, setCollectionOnlyMultiOwned] = useState(false);
   const [selectedCollectionRarity, setSelectedCollectionRarity] = useState("");
-  const [selectedCollectionSet, setSelectedCollectionSet] = useState("");
+  const [selectedCollectionSeries, setSelectedCollectionSeries] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [seriesError, setSeriesError] = useState<string | null>(null);
-  const [setError, setSetError] = useState<string | null>(null);
   const [rarityError, setRarityError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isLoadingUser, setIsLoadingUser] = useState(false);
   const [isSearchingCatalog, setIsSearchingCatalog] = useState(false);
   const [isLoadingSeries, setIsLoadingSeries] = useState(false);
-  const [isLoadingSets, setIsLoadingSets] = useState(false);
   const [isLoadingRarities, setIsLoadingRarities] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -442,7 +445,7 @@ export function CardListApp({
   )];
 
   const searchedCards = cards.filter((card) => matchesCollectionQuery(card, deferredQuery));
-  const collectionSetOptions = getOwnedSetOptions(searchedCards);
+  const collectionSeriesOptions = getOwnedSeriesOptions(searchedCards);
   const collectionRarityOptions = getOwnedRarityOptions(searchedCards, rarityOptions);
   const collectionSortBase = getOwnedCardSortBase(collectionSortOrder);
   const collectionSortLatestFirst = isOwnedCardSortLatest(collectionSortOrder);
@@ -465,14 +468,17 @@ export function CardListApp({
       }
     }
 
-    if (selectedCollectionSet && getOwnedSetFilterKey(card.card) !== selectedCollectionSet) {
+    if (
+      selectedCollectionSeries &&
+      getOwnedSeriesFilterKey(card.card) !== selectedCollectionSeries
+    ) {
       return false;
     }
 
     return true;
   }), collectionSortOrder);
   const totalQuantity = cards.reduce((sum, card) => sum + card.quantity, 0);
-  const uniqueSets = new Set(cards.map((card) => card.card.setNameKo)).size;
+  const uniqueSeries = new Set(cards.map((card) => getOwnedSeriesLabel(card.card))).size;
 
   const resetLoadedCollection = useCallback((options?: { clearInput?: boolean }) => {
     setActiveUserId(null);
@@ -486,7 +492,7 @@ export function CardListApp({
     setIsBulkCreateOpen(false);
     setCollectionOnlyMultiOwned(false);
     setSelectedCollectionRarity("");
-    setSelectedCollectionSet("");
+    setSelectedCollectionSeries("");
     setLoadError(null);
     setSubmitError(null);
     setSuccessMessage(null);
@@ -515,7 +521,6 @@ export function CardListApp({
   const loadRarityOptions = useCallback(async (params?: {
     query?: string;
     seriesName?: string;
-    setId?: number;
     scope?: "meta";
   }) => {
     setIsLoadingRarities(true);
@@ -534,10 +539,6 @@ export function CardListApp({
 
       if (params?.seriesName?.trim()) {
         query.set("seriesName", params.seriesName.trim());
-      }
-
-      if (params?.setId) {
-        query.set("setId", String(params.setId));
       }
 
       const response = await fetch(
@@ -646,9 +647,9 @@ export function CardListApp({
       activeUserId,
       totalQuantity,
       totalCards: cards.length,
-      uniqueSets,
+      uniqueSeries,
     });
-  }, [activeUserId, cards.length, setSummary, totalQuantity, uniqueSets]);
+  }, [activeUserId, cards.length, setSummary, totalQuantity, uniqueSeries]);
 
   useEffect(() => {
     if (!isViewerMode) {
@@ -660,7 +661,7 @@ export function CardListApp({
         activeUserId: null,
         totalQuantity: 0,
         totalCards: 0,
-        uniqueSets: 0,
+        uniqueSeries: 0,
       });
     };
   }, [isViewerMode, setSummary]);
@@ -676,12 +677,12 @@ export function CardListApp({
 
   useEffect(() => {
     if (
-      selectedCollectionSet &&
-      !collectionSetOptions.some((option) => option.key === selectedCollectionSet)
+      selectedCollectionSeries &&
+      !collectionSeriesOptions.some((option) => option.key === selectedCollectionSeries)
     ) {
-      setSelectedCollectionSet("");
+      setSelectedCollectionSeries("");
     }
-  }, [collectionSetOptions, selectedCollectionSet]);
+  }, [collectionSeriesOptions, selectedCollectionSeries]);
 
   useEffect(() => {
     if (canManageActiveCollection) {
@@ -732,38 +733,6 @@ export function CardListApp({
       top: Math.max(top, 0),
       behavior: "smooth",
     });
-  }
-
-  async function loadSeriesSets(seriesName: string) {
-    if (!seriesName) {
-      setSetOptions([]);
-      setSetError(null);
-      return;
-    }
-
-    setIsLoadingSets(true);
-    setSetError(null);
-
-    try {
-      const query = new URLSearchParams({
-        seriesName,
-        limit: "200",
-      });
-      const response = await fetch(`/api/catalog/sets?${query.toString()}`, {
-        cache: "no-store",
-      });
-      const result = (await response.json()) as ApiResponse<CardSetSummary[]>;
-
-      if (!response.ok || !result.data) {
-        throw new Error(result.error ?? "카드 세트 조회에 실패했습니다.");
-      }
-
-      setSetOptions(result.data);
-    } catch (error) {
-      setSetError(error instanceof Error ? error.message : "카드 세트 조회에 실패했습니다.");
-    } finally {
-      setIsLoadingSets(false);
-    }
   }
 
   function resolveSelectedRarityWithOptions(
@@ -820,7 +789,7 @@ export function CardListApp({
         setSelectedMaster(null);
         setCollectionOnlyMultiOwned(false);
         setSelectedCollectionRarity("");
-        setSelectedCollectionSet("");
+        setSelectedCollectionSeries("");
         if (!isViewerMode) {
           window.localStorage.setItem(LAST_ACTIVE_USER_ID_STORAGE_KEY, result.data.userId);
         }
@@ -968,7 +937,6 @@ export function CardListApp({
   async function searchCatalog(
     page = 1,
     nextSeriesName = selectedSeriesName || undefined,
-    nextSet = selectedSet,
     nextRarity = selectedRarity,
     nextSortOrder = catalogSortOrder,
     raritySourceOptions = rarityOptions,
@@ -986,10 +954,6 @@ export function CardListApp({
 
       if (nextSeriesName) {
         query.set("seriesName", nextSeriesName);
-      }
-
-      if (nextSet) {
-        query.set("setId", String(nextSet.id));
       }
 
       if (nextRarity) {
@@ -1023,7 +987,6 @@ export function CardListApp({
       const nextRarityOptions = await loadRarityOptions({
         query: catalogQuery,
         seriesName: nextSeriesName,
-        setId: nextSet?.id,
       });
       setSelectedRarity(resolveSelectedRarityWithOptions(nextRarityOptions, nextRarity));
     } catch (error) {
@@ -1035,10 +998,7 @@ export function CardListApp({
 
   async function handleSeriesChange(nextSeriesName: string) {
     setSelectedSeriesName(nextSeriesName);
-    setSelectedSet(null);
     setSelectedMaster(null);
-    setSetOptions([]);
-    setSetError(null);
     resetCatalogResults();
     const nextRarityOptions = await loadRarityOptions({
       query: catalogQuery,
@@ -1047,63 +1007,9 @@ export function CardListApp({
     const nextRarity = resolveSelectedRarityWithOptions(nextRarityOptions, selectedRarity);
     setSelectedRarity(nextRarity);
 
-    if (nextSeriesName) {
-      await loadSeriesSets(nextSeriesName);
-    }
-
     void searchCatalog(
       1,
       nextSeriesName || undefined,
-      null,
-      nextRarity,
-      catalogSortOrder,
-      nextRarityOptions ?? rarityOptions,
-    );
-  }
-
-  async function handleSetChange(nextSetId: string) {
-    if (!nextSetId) {
-      setSelectedSet(null);
-      setSelectedMaster(null);
-      resetCatalogResults();
-      const nextRarityOptions = await loadRarityOptions({
-        query: catalogQuery,
-        seriesName: selectedSeriesName || undefined,
-      });
-      const nextRarity = resolveSelectedRarityWithOptions(nextRarityOptions, selectedRarity);
-      setSelectedRarity(nextRarity);
-      void searchCatalog(
-        1,
-        selectedSeriesName || undefined,
-        null,
-        nextRarity,
-        catalogSortOrder,
-        nextRarityOptions ?? rarityOptions,
-      );
-      return;
-    }
-
-    const nextSet = setOptions.find((set) => set.id === Number(nextSetId));
-
-    if (!nextSet) {
-      setSetError("선택한 카드 세트를 찾지 못했습니다.");
-      return;
-    }
-
-    setSetError(null);
-    setSelectedSet(nextSet);
-    setSelectedMaster(null);
-    const nextRarityOptions = await loadRarityOptions({
-      query: catalogQuery,
-      seriesName: selectedSeriesName || undefined,
-      setId: nextSet.id,
-    });
-    const nextRarity = resolveSelectedRarityWithOptions(nextRarityOptions, selectedRarity);
-    setSelectedRarity(nextRarity);
-    void searchCatalog(
-      1,
-      selectedSeriesName || undefined,
-      nextSet,
       nextRarity,
       catalogSortOrder,
       nextRarityOptions ?? rarityOptions,
@@ -1118,13 +1024,11 @@ export function CardListApp({
     const nextRarityOptions = await loadRarityOptions({
       query: catalogQuery,
       seriesName: selectedSeriesName || undefined,
-      setId: selectedSet?.id,
     });
 
     void searchCatalog(
       1,
       selectedSeriesName || undefined,
-      selectedSet,
       nextRarity,
       catalogSortOrder,
       nextRarityOptions ?? rarityOptions,
@@ -1138,7 +1042,6 @@ export function CardListApp({
     void searchCatalog(
       1,
       selectedSeriesName || undefined,
-      selectedSet,
       selectedRarity,
       nextSortOrder,
       rarityOptions,
@@ -1211,7 +1114,6 @@ export function CardListApp({
     void searchCatalog(
       page,
       selectedSeriesName || undefined,
-      selectedSet,
       selectedRarity,
       catalogSortOrder,
       rarityOptions,
@@ -1495,9 +1397,6 @@ export function CardListApp({
               seriesOptions={seriesOptions}
               selectedSeriesName={selectedSeriesName}
               seriesPending={isLoadingSeries}
-              setOptions={setOptions}
-              selectedSetId={selectedSet?.id ?? null}
-              setPending={isLoadingSets}
               rarityOptions={rarityOptions}
               selectedRarity={selectedRarity}
               selectedSortOrder={catalogSortOrder}
@@ -1508,7 +1407,6 @@ export function CardListApp({
               rarityPending={isLoadingRarities}
               error={catalogError}
               seriesError={seriesError}
-              setError={setError}
               rarityError={rarityError}
               page={catalogPage}
               pageSize={CATALOG_PAGE_SIZE}
@@ -1537,7 +1435,6 @@ export function CardListApp({
               onSeriesChange={(seriesName) => {
                 void handleSeriesChange(seriesName);
               }}
-              onSetChange={handleSetChange}
               onRarityChange={handleRarityChange}
               onSelect={(card) => {
                 const writeBlockedMessage = getWriteBlockedMessage();
@@ -1593,7 +1490,7 @@ export function CardListApp({
                     <div className="detail-field-list">
                       {selectedCatalogCards.slice(0, 6).map((card) => (
                         <div className="detail-field" key={card.id}>
-                          <span>{card.set.setNameKo}</span>
+                          <span>{getMasterSeriesLabel(card)}</span>
                           <strong>
                             {card.cardNameKo} · {card.cardNo}
                           </strong>
@@ -1648,7 +1545,7 @@ export function CardListApp({
                     <span className="form-dialog-eyebrow">내 카드 추가</span>
                     <h2 id="catalog-save-dialog-title">{selectedMaster.cardNameKo}</h2>
                     <p>
-                      {selectedMaster.set.setNameKo} · {selectedMaster.cardNo}
+                      {getMasterSeriesLabel(selectedMaster)} · {selectedMaster.cardNo}
                     </p>
                   </div>
                   <button
@@ -1680,7 +1577,7 @@ export function CardListApp({
                           imageSrc,
                           alt: selectedMaster.cardNameKo,
                           title: selectedMaster.cardNameKo,
-                          subtitle: `${selectedMaster.set.setNameKo} · ${selectedMaster.cardNo}`,
+                          subtitle: `${getMasterSeriesLabel(selectedMaster)} · ${selectedMaster.cardNo}`,
                         });
                       }}
                       disabled={!getMasterPreviewImageSrc(selectedMaster)}
@@ -1719,7 +1616,7 @@ export function CardListApp({
                       key={`form-${selectedMaster.id}`}
                       mode="create"
                       title={selectedMaster.cardNameKo}
-                      subtitle={`${selectedMaster.set.setNameKo} · ${selectedMaster.cardNo}`}
+                      subtitle={`${getMasterSeriesLabel(selectedMaster)} · ${selectedMaster.cardNo}`}
                       initialValues={emptyCollectionFormValues}
                       activeUserId={activeUserId}
                       pending={isSubmitting}
@@ -1756,7 +1653,7 @@ export function CardListApp({
                 <p>
                   {isViewerMode
                     ? "불러온 사용자 카드 목록을 보고, 사진을 눌러 크게 확인할 수 있습니다."
-                    : "검색은 카드명, 세트명, 카드 번호, 로컬 코드, 메모 기준으로 동작합니다."}
+                    : "검색은 카드명, 시리즈명, 카드 번호, 로컬 코드, 메모 기준으로 동작합니다."}
                 </p>
               </div>
               <div className="collection-toolbar">
@@ -1841,14 +1738,14 @@ export function CardListApp({
                   </div>
 
                   <div className="field">
-                    <label htmlFor="collectionSetFilter">카드 세트</label>
+                    <label htmlFor="collectionSeriesFilter">시리즈</label>
                     <select
-                      id="collectionSetFilter"
-                      value={selectedCollectionSet}
-                      onChange={(event) => setSelectedCollectionSet(event.target.value)}
+                      id="collectionSeriesFilter"
+                      value={selectedCollectionSeries}
+                      onChange={(event) => setSelectedCollectionSeries(event.target.value)}
                     >
-                      <option value="">전체 카드 세트</option>
-                      {collectionSetOptions.map((option) => (
+                      <option value="">전체 시리즈</option>
+                      {collectionSeriesOptions.map((option) => (
                         <option key={option.key} value={option.key}>
                           {option.label}
                         </option>
@@ -1942,7 +1839,7 @@ export function CardListApp({
                   imageSrc,
                   alt: inspectCard.card.cardNameKo,
                   title: inspectCard.card.cardNameKo,
-                  subtitle: `${inspectCard.card.setNameKo} · ${inspectCard.card.cardNo}`,
+                  subtitle: `${getOwnedSeriesLabel(inspectCard.card)} · ${inspectCard.card.cardNo}`,
                 });
               }}
               onEdit={
@@ -1973,7 +1870,7 @@ export function CardListApp({
                     <span className="form-dialog-eyebrow">내 카드 수정</span>
                     <h2 id="collection-edit-dialog-title">{editingCard.card.cardNameKo}</h2>
                     <p>
-                      {editingCard.card.setNameKo} · {editingCard.card.cardNo}
+                      {getOwnedSeriesLabel(editingCard.card)} · {editingCard.card.cardNo}
                     </p>
                   </div>
                   <button
@@ -2004,7 +1901,7 @@ export function CardListApp({
                           imageSrc,
                           alt: editingCard.card.cardNameKo,
                           title: editingCard.card.cardNameKo,
-                          subtitle: `${editingCard.card.setNameKo} · ${editingCard.card.cardNo}`,
+                          subtitle: `${getOwnedSeriesLabel(editingCard.card)} · ${editingCard.card.cardNo}`,
                         });
                       }}
                       disabled={!getOwnedPreviewImageSrc(editingCard)}
@@ -2026,16 +1923,6 @@ export function CardListApp({
                       </div>
                     </button>
 
-                    <div className="catalog-card-meta form-dialog-meta">
-                      <span>보유 수량 {editingCard.quantity}</span>
-                      <span>상태 {CARD_CONDITION_LABELS[editingCard.condition]}</span>
-                      <span>구매일 {formatOwnedDate(editingCard.acquiredAt)}</span>
-                    </div>
-
-                    <p className="form-dialog-copy">
-                      이미지를 누르면 크게 볼 수 있습니다. 저장된 내 카드 기록을 수정하고,
-                      수량과 상태, 메모, 구매일만 업데이트합니다.
-                    </p>
                   </div>
 
                   <div className="form-dialog-form">
@@ -2043,7 +1930,7 @@ export function CardListApp({
                       key={`form-${editingCard.id}`}
                       mode="edit"
                       title={editingCard.card.cardNameKo}
-                      subtitle={`${editingCard.card.setNameKo} · ${editingCard.card.cardNo}`}
+                      subtitle={`${getOwnedSeriesLabel(editingCard.card)} · ${editingCard.card.cardNo}`}
                       initialValues={toCollectionFormValues(editingCard)}
                       activeUserId={activeUserId}
                       pending={isSubmitting}

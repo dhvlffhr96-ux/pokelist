@@ -47,13 +47,7 @@ export const catalogQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(40).default(24),
   sort: z.enum(["default", "latest", "oldest"]).default("default"),
   seriesName: z.string().trim().max(120).optional(),
-  setId: z.coerce.number().int().positive().optional(),
   rarities: z.array(z.string().trim().max(50)).optional(),
-});
-
-export const catalogSetQuerySchema = z.object({
-  seriesName: z.string().trim().max(120).optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(100),
 });
 
 export const catalogSeriesQuerySchema = z.object({
@@ -63,7 +57,6 @@ export const catalogSeriesQuerySchema = z.object({
 export const catalogRarityQuerySchema = z.object({
   q: z.string().trim().max(80).optional(),
   seriesName: z.string().trim().max(120).optional(),
-  setId: z.coerce.number().int().positive().optional(),
 });
 
 export type CollectionFormValues = {
@@ -77,7 +70,7 @@ export type CollectionFieldErrors = Partial<Record<keyof CollectionFormValues, s
 
 export const emptyCollectionFormValues: CollectionFormValues = {
   quantity: "1",
-  condition: "MINT",
+  condition: "TOP",
   memo: "",
   acquiredAt: "",
 };

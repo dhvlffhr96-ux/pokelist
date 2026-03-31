@@ -128,9 +128,9 @@ export function SiteHeader() {
                     <strong>{summary.totalQuantity}</strong>
                   </div>
                   <div className="header-summary-item">
-                    <span>종류/세트</span>
+                    <span>종류/시리즈</span>
                     <strong>
-                      {summary.totalCards}/{summary.uniqueSets}
+                      {summary.totalCards}/{summary.uniqueSeries}
                     </strong>
                   </div>
                   {viewedUserId ? (

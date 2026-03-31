@@ -9,7 +9,6 @@ export async function GET(request: Request) {
     const pageSize = searchParams.get("pageSize") ?? "24";
     const sort = searchParams.get("sort") ?? "default";
     const seriesName = searchParams.get("seriesName") ?? "";
-    const setId = searchParams.get("setId");
     const rarities = searchParams.getAll("rarity").filter(Boolean);
     const cards = await searchCatalogCards({
       query,
@@ -17,7 +16,6 @@ export async function GET(request: Request) {
       pageSize: Number(pageSize),
       sort: sort === "latest" || sort === "oldest" ? sort : "default",
       seriesName: seriesName || undefined,
-      setId: setId ? Number(setId) : undefined,
       rarities: rarities.length > 0 ? rarities : undefined,
     });
 

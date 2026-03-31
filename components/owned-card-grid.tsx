@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  CARD_CONDITION_LABELS,
-  CARD_TYPE_LABELS,
-  type OwnedCardItem,
-} from "@/lib/cards/types";
+import { CARD_CONDITION_LABELS, type OwnedCardItem } from "@/lib/cards/types";
 
 type OwnedCardGridProps = {
   cards: OwnedCardItem[];
@@ -25,21 +21,28 @@ function getPreviewImageSrc(card: OwnedCardItem) {
   return card.card.thumbnailUrl ?? card.card.imageUrl;
 }
 
-function formatDate(date: string | null) {
-  if (!date) {
-    return "미입력";
+function getSeriesLabel(card: OwnedCardItem) {
+  return card.card.seriesName?.trim() || card.card.setNameKo?.trim() || "시리즈 없음";
+}
+
+function getMemoPreview(memo: string | null) {
+  const normalized = memo?.replace(/\s+/g, " ").trim();
+
+  if (!normalized) {
+    return "없음";
   }
 
-  return new Intl.DateTimeFormat("ko-KR", {
-    dateStyle: "medium",
-  }).format(new Date(date));
+  if (normalized.length <= 72) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 72)}...`;
 }
 
 export function OwnedCardGrid({
   cards,
   activeUserId,
   editable,
-  readOnlyReason,
   emptyHint,
   missingUserMessage,
   viewMode,
@@ -77,30 +80,31 @@ export function OwnedCardGrid({
         {cards.map((card) => {
           const previewImageSrc = getPreviewImageSrc(card);
           const isSelected = selectedCardId === card.id;
+          const handleCardActivate = () => {
+            if (editable) {
+              onEdit(card);
+              return;
+            }
+
+            onInspect(card);
+          };
+          const cardActionLabel = editable ? "카드 수정 창 열기" : "카드 상세 정보 열기";
 
           if (viewMode === "compact") {
             return (
               <article
-                className={`card-compact-item ${editable ? "card-item-clickable" : "card-item-readonly"} ${isSelected ? "card-item-selected" : ""}`}
+                className={`card-compact-item card-item-clickable ${isSelected ? "card-item-selected" : ""}`}
                 key={card.id}
-                role={editable ? "button" : undefined}
-                tabIndex={editable ? 0 : undefined}
-                onClick={() => {
-                  if (editable) {
-                    onEdit(card);
-                  }
-                }}
+                role="button"
+                tabIndex={0}
+                onClick={handleCardActivate}
                 onKeyDown={(event) => {
-                  if (!editable) {
-                    return;
-                  }
-
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
-                    onEdit(card);
+                    handleCardActivate();
                   }
                 }}
-                aria-label={`${card.card.cardNameKo} 카드 수정 창 열기`}
+                aria-label={`${card.card.cardNameKo} ${cardActionLabel}`}
               >
                 <div className="card-compact-media">
                   {previewImageSrc ? (
@@ -132,26 +136,18 @@ export function OwnedCardGrid({
 
           return (
             <article
-              className={`card-item ${editable ? "card-item-clickable" : "card-item-readonly"} ${isSelected ? "card-item-selected" : ""}`}
+              className={`card-item card-item-clickable ${isSelected ? "card-item-selected" : ""}`}
               key={card.id}
-              role={editable ? "button" : undefined}
-              tabIndex={editable ? 0 : undefined}
-              onClick={() => {
-                if (editable) {
-                  onEdit(card);
-                }
-              }}
+              role="button"
+              tabIndex={0}
+              onClick={handleCardActivate}
               onKeyDown={(event) => {
-                if (!editable) {
-                  return;
-                }
-
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  onEdit(card);
+                  handleCardActivate();
                 }
               }}
-              aria-label={`${card.card.cardNameKo} 카드 수정 창 열기`}
+              aria-label={`${card.card.cardNameKo} ${cardActionLabel}`}
             >
               <div className="card-item-layout">
                 <div className="owned-card-media">
@@ -179,7 +175,7 @@ export function OwnedCardGrid({
                     <div>
                       <h3>{card.card.cardNameKo}</h3>
                       <div className="card-meta">
-                        <span>{card.card.setNameKo}</span>
+                        <span>{getSeriesLabel(card)}</span>
                       </div>
                     </div>
                     <span className="status-pill">x {card.quantity}</span>
@@ -187,38 +183,18 @@ export function OwnedCardGrid({
 
                   <div className="card-meta">
                     <span>
-                      카드 번호 <strong>{card.card.cardNo}</strong>
-                    </span>
-                    <span>
-                      카드 유형 <strong>{CARD_TYPE_LABELS[card.card.cardType]}</strong>
-                    </span>
-                    <span>
                       상태 <strong>{CARD_CONDITION_LABELS[card.condition]}</strong>
                     </span>
                     <span>
-                      구매일 <strong>{formatDate(card.acquiredAt)}</strong>
-                    </span>
-                    <span>
-                      메모 <strong>{card.memo ?? "없음"}</strong>
+                      메모{" "}
+                      <strong className="card-meta-memo" title={card.memo?.trim() || undefined}>
+                        {getMemoPreview(card.memo)}
+                      </strong>
                     </span>
                   </div>
 
-                  <div className="card-actions">
-                    <div className="card-item-hint">
-                      <strong>
-                        {editable
-                          ? isSelected
-                            ? "수정 창 열림"
-                            : "카드를 눌러 수정"
-                          : "현재는 읽기 전용"}
-                      </strong>
-                      <span>
-                        {editable
-                          ? "수량, 상태, 메모를 바꿀 수 있습니다."
-                          : readOnlyReason ?? "로그인한 본인 목록에서만 수정할 수 있습니다."}
-                      </span>
-                    </div>
-                    {editable ? (
+                  {editable ? (
+                    <div className="card-actions">
                       <button
                         className="btn btn-danger"
                         type="button"
@@ -230,8 +206,8 @@ export function OwnedCardGrid({
                       >
                         {pendingId === card.id ? "삭제 중..." : "삭제"}
                       </button>
-                    ) : null}
-                  </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </article>

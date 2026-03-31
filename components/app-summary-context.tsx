@@ -6,7 +6,7 @@ export type AppSummaryState = {
   activeUserId: string | null;
   totalQuantity: number;
   totalCards: number;
-  uniqueSets: number;
+  uniqueSeries: number;
 };
 
 type AppSummaryContextValue = {
@@ -18,7 +18,7 @@ const INITIAL_SUMMARY: AppSummaryState = {
   activeUserId: null,
   totalQuantity: 0,
   totalCards: 0,
-  uniqueSets: 0,
+  uniqueSeries: 0,
 };
 
 const AppSummaryContext = createContext<AppSummaryContextValue | null>(null);

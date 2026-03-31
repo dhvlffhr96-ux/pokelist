@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ConditionHelpTooltip } from "@/components/condition-help-tooltip";
 import {
   CARD_CONDITION_LABELS,
   CARD_CONDITIONS,
@@ -97,7 +98,10 @@ export function OwnedCardForm({
         </div>
 
         <div className="field">
-          <label htmlFor="condition">상태</label>
+          <div className="field-label-row">
+            <label htmlFor="condition">상태</label>
+            <ConditionHelpTooltip />
+          </div>
           <select
             id="condition"
             value={values.condition}
@@ -133,7 +137,7 @@ export function OwnedCardForm({
         <label htmlFor="memo">메모</label>
         <textarea
           id="memo"
-          rows={4}
+          rows={3}
           value={values.memo}
           onChange={(event) => updateValue("memo", event.target.value)}
           placeholder="보관 위치, 구매처, 교환 메모 등을 적어두세요."
